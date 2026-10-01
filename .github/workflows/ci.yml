@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: tftio/gh-actions/.github/workflows/rust-ci.yml@v2.1.0
+    with:
+      # 813 tests under cargo-llvm-cov write a .profraw each; with an
+      # instrumented target directory and a restored cargo cache that exceeds
+      # the runner's ~14 GB. The symptom is "No space left on device" from
+      # LLVM's profile writer, reported as an unrelated test failure.
+      free-disk-space: true

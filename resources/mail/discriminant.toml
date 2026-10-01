@@ -1,0 +1,33 @@
+# The bulk/non-bulk discriminant, as data rather than code.
+#
+# T018's deliverable is a rule *plus a known error rate*, and the rate only
+# stays known if the rule can be re-tuned and re-measured without a rebuild.
+# `kb mail classify` reads the signal set; `scripts/mail_sample.py` measures
+# what it drops.
+
+[header_rule]
+# A message carrying any of these headers is automated. Matched on header
+# names only, case-insensitively, and never on a continuation line or on the
+# body -- correspondence that quotes a newsletter is not a newsletter.
+signals = ["list-unsubscribe", "list-id", "precedence", "auto-submitted"]
+
+[behavioural_override]
+# Replying is a far stronger signal that a message mattered than any header,
+# so a message in a thread the mailbox owner wrote into is kept even when a
+# signal fired. Resolved from In-Reply-To and References across the messages
+# sent from the owner's address, which `scripts/mail_sample.py --address`
+# names.
+enabled = true
+
+# Except from these senders. Machine-delivered discussion -- GitHub review
+# threads, task-tracker comments -- carries real human argument, but it is out
+# of scope for this corpus: it wants an extractor that understands its
+# structure rather than ingesting the notification wrapper around it. Without
+# this exclusion the override readmits exactly that traffic, since people
+# reply in those threads constantly.
+exclude_senders = [
+  "notifications@github.com",
+  "no-reply@github.com",
+  "marketing@github.com",
+  "no-reply@asana.com",
+]

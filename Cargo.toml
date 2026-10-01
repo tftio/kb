@@ -1,0 +1,105 @@
+[package]
+name = "tftio-kb"
+version = "7.0.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+description = "Personal knowledge base — typed AST with org-mode as projection, SQLite-backed"
+readme = "README.md"
+repository = "https://github.com/tftio/kb"
+homepage = "https://github.com/tftio/kb"
+keywords = ["rust"]
+categories = ["development-tools"]
+# Not published to crates.io while the GitHub repository is the distribution
+# channel. Revisit before re-enabling.
+publish = false
+# Package only what builds the crate. Without this list `cargo package` ships
+# every tracked file: `resources/eval/` holds evaluation fixtures that do not
+# belong in a crate, and the Python gate's files would read as a package
+# definition for a crate with no Python in it. The script and template are here
+# because `src/` embeds them with `include_str!`.
+include = [
+  "src/**",
+  "scripts/session-end-kb.sh",
+  "templates/cold-start-audit.j2",
+  "Cargo.toml",
+  "Cargo.lock",
+  "README.md",
+  "LICENSE",
+]
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+enum_glob_use = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+wildcard_imports = "deny"
+multiple_crate_versions = "allow"
+cargo_common_metadata = "allow"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+
+[lib]
+name = "kb"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kb"
+path = "src/bin/kb.rs"
+
+# The MCP surface is a second binary rather than a `kb mcp` subcommand: an MCP
+# server owns stdin and stdout for the life of the session, which is a
+# different contract from a CLI that reads a document and prints a result, and
+# a client launching it should not be one typo away from running a mutation.
+[[bin]]
+name = "kb-mcp"
+path = "src/bin/kb-mcp.rs"
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+# Only the object database and reference store are wanted: kb uses git as a
+# content-addressed blob store, not as a working-tree VCS. `sha1` is the object
+# hash and is the one feature gix cannot build without; `basic`/`extras`/
+# `comfort` would pull in blob-diff, revision walking and the index, none of
+# which a blob store touches.
+gix = { version = "0.87.1", default-features = false, features = ["sha1"] }
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+mail-parser = "0.11.6"
+minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+rmcp = { version = "3.1.3", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rusqlite = { version = "0.38", features = ["bundled", "load_extension"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.0"
+tftio-lib = "0.4.2"
+tftio-org = "0.1.0"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt", "signal", "time"] }
+tower-service = "0.3"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+mockito = "1"
+proptest = "1"
+tempfile = "3"

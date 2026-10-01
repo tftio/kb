@@ -1,0 +1,12 @@
+# Managed by Copier — do not edit by hand.
+# Update with: copier update --answers-file .copier-answers.base.yml
+_src_path: project-templates/base
+author_email: j@tft.io
+author_name: jfb
+description: Personal knowledge base — typed AST with org-mode as projection, SQLite-backed
+init_git: false
+package_slug: kb
+project_kind: rust-cli
+project_name: kb
+publish: true
+vcs_host: github

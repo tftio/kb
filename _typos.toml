@@ -1,0 +1,12 @@
+# Git object ids are not words. Without this, typos splits a short sha on its
+# digits and reports the leading letters as a misspelling - `ba7a23c` becomes
+# `ba`, "did you mean `by`". Comments cite commit shas, so this would recur
+# on every one of them.
+[default]
+extend-ignore-identifiers-re = ["\\b[0-9a-f]{7,40}\\b"]
+
+# Embedding fingerprints are packed little-endian f32, not text. Any byte
+# sequence can occur in them, so typos reports whichever ASCII runs happen to
+# fall out of the float encoding.
+[files]
+extend-exclude = ["resources/fingerprints/*.f32"]

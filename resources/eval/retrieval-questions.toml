@@ -1,0 +1,429 @@
+# Retrieval evaluation question set, read by `mise run eval:retrieval`,
+# `kb mail scope`, and `kb mail index`.
+#
+# This committed file is synthetic. Every node id, Message-ID, title, and hash
+# below is invented, so it resolves against no real corpus; it exists to pin
+# the schema and to give the tests and tools a well-formed default. To measure
+# retrieval over a real corpus, author a question set against that corpus and
+# pass it with `--questions`.
+#
+# Each question names the nodes that genuinely answer it. A question is scored a
+# hit at rank k when any `expect` entry matches a result inside the first k
+# results, where a match is either `node_id` equality or a `title_regex` match
+# against the result's title. `title` is not used for matching; it records the
+# node's title as of authoring so that a corpus change producing a different
+# title is visible as a mismatch rather than silently altering the measurement.
+#
+# `population` records which of the corpus's several populations the expected
+# answer lives in, so aggregate metrics can be broken down by population. A set
+# that samples only one population measures only that population.
+
+schema_version = 1
+
+# The corpus vocabulary, fixed here rather than by the registry. A registry
+# that invented its own identifiers would silently break the join between an
+# index row's corpus and an `expect` entry's, and the break would look like a
+# retrieval regression rather than a naming mismatch.
+#
+# An `expect` entry with no `corpus` means "kb".
+[corpora]
+known = ["kb", "mail"]
+default = "kb"
+
+[corpus]
+snapshot_date = "2026-09-30"
+node_count = 0
+database = "~/.local/share/kb/kb.db"
+embedding_model = "example-embedding-model"
+endpoint = "http://127.0.0.1:1234/v1"
+
+# ─── Hand-authored nodes ──────────────────────────────────────────────────
+
+[[question]]
+id = "Q001"
+query = "how should prose written for me be phrased: tone, sentence length, hedging"
+population = "authored"
+expect = [
+  { node_id = "a811bafc-3e9a-5da7-b67f-172c968e03b5", title = "Writing style guide" },
+]
+
+[[question]]
+id = "Q002"
+query = "what is the house style for commit messages"
+population = "authored"
+expect = [
+  { node_id = "64fb7ccc-b851-5257-b972-3e5668b64583", title = "Commit message conventions" },
+  { node_id = "ae98e08e-0e44-53c5-a67c-c860a2c45fb9", title = "Conventional Commits cheat sheet" },
+]
+
+[[question]]
+id = "Q003"
+query = "which programming languages and tools does this knowledge base assume"
+population = "authored"
+expect = [
+  { node_id = "936543ec-6b8d-5327-bd33-2aebb557258e", title = "Toolchain overview" },
+]
+
+[[question]]
+id = "Q004"
+query = "should an assistant push back when a claim looks wrong"
+population = "authored"
+expect = [
+  { node_id = "7ad9c798-f0ba-556d-b768-74bbf5f2e063", title = "Disagreement and pushback policy" },
+]
+
+[[question]]
+id = "Q005"
+query = "how are tags spelled and when is a new tag justified"
+population = "authored"
+expect = [
+  { node_id = "663f62bc-f682-5267-9958-f10d2c4ca5a8", title = "Tagging conventions" },
+]
+
+[[question]]
+id = "Q006"
+query = "what is the weekly review checklist"
+population = "authored"
+expect = [
+  { node_id = "c950ff63-257c-5a3f-b6c2-28adabc7543b", title = "Weekly review checklist" },
+]
+
+[[question]]
+id = "Q007"
+query = "how do I decide between writing a plan and just making the change"
+population = "authored"
+expect = [
+  { node_id = "ae5a3b4b-982f-5e0b-9221-3d4326537004", title = "When to write a plan" },
+]
+
+[[question]]
+id = "Q008"
+query = "what reading list did I keep on distributed systems"
+population = "authored"
+expect = [
+  { node_id = "653c8dce-5555-55b0-b94a-9f5906f84259", title = "Distributed systems reading list" },
+]
+
+# ─── Distilled session summaries ──────────────────────────────────────────
+
+[[question]]
+id = "Q009"
+query = "why did the store move from a single SQLite file to content-addressed blobs"
+population = "agent-summary"
+expect = [
+  { node_id = "1090219c-3f50-5389-95cb-0eb70f28ddb8", title = "Content-addressed store rationale" },
+]
+
+[[question]]
+id = "Q010"
+query = "how was the retrieval evaluation harness scored"
+population = "agent-summary"
+expect = [
+  { node_id = "582ec2f0-c9f0-5507-a884-00411fc57881", title = "Retrieval evaluation scoring" },
+]
+
+[[question]]
+id = "Q011"
+query = "what went wrong when the embedding endpoint was unreachable during capture"
+population = "agent-summary"
+expect = [
+  { node_id = "86ee4422-7d78-5314-b3ea-8c3df3859a55", title = "Embedding outage during capture" },
+]
+
+[[question]]
+id = "Q012"
+query = "what is the difference between id links and name links"
+population = "agent-summary"
+expect = [
+  { node_id = "33bbc686-2f5c-5ed9-9da5-62bbefb28470", title = "Link types in the graph" },
+]
+
+[[question]]
+id = "Q013"
+query = "how does the session-end hook decide what to distil"
+population = "agent-summary"
+expect = [
+  { node_id = "2978d26b-cfb7-576c-94ba-511846a7405e", title = "Session-end distillation" },
+]
+
+[[question]]
+id = "Q014"
+query = "why is the org parser kept in this crate"
+population = "agent-summary"
+expect = [
+  { node_id = "244aaf0f-0e65-5e35-8888-8a1bf5d84f12", title = "In-crate org parser decision" },
+]
+
+# ─── Claude Code session transcripts ──────────────────────────────────────
+
+[[question]]
+id = "Q015"
+query = "how was the flaky integration test on the queue worker fixed"
+population = "claude-code-session"
+expect = [
+  { node_id = "cc-5d9d47f0-7ece-572a-81e9-3b39560d813d", title = "Queue worker flaky test fix" },
+]
+
+[[question]]
+id = "Q016"
+query = "how is a screenshot tool configured on a new laptop"
+population = "claude-code-session"
+expect = [
+  { node_id = "cc-5fafe9ff-f43d-59c4-b291-771d35538974", title = "Screenshot tool setup" },
+]
+
+[[question]]
+id = "Q017"
+query = "which API endpoints list a user's own submissions on a link aggregator"
+population = "claude-code-session"
+expect = [
+  { node_id = "cc-b995db10-e4e6-5206-b210-8a61bffd0934", title = "Link aggregator API endpoints" },
+]
+
+[[question]]
+id = "Q018"
+query = "how did we bisect the slow full-text query"
+population = "claude-code-session"
+expect = [
+  { node_id = "cc-75373785-44ca-5339-9378-036df6971ce8", title = "Bisecting a slow FTS5 query" },
+]
+
+[[question]]
+id = "Q019"
+query = "what broke when the Rust toolchain was upgraded"
+population = "claude-code-session"
+expect = [
+  { node_id = "cc-b324ac56-f9ad-5d2b-8efe-9b2acffd50d3", title = "Toolchain upgrade breakage" },
+]
+
+[[question]]
+id = "Q020"
+query = "how are coverage reports produced in CI"
+population = "claude-code-session"
+expect = [
+  { node_id = "cc-e2c68e13-7ab7-5ad8-b1e0-8fdca8409fc6", title = "Coverage reporting in CI" },
+]
+
+# ─── Codex session transcripts ────────────────────────────────────────────
+
+[[question]]
+id = "Q021"
+query = "how was the Python importer packaged as a uv tool"
+population = "codex-session"
+expect = [
+  { node_id = "667c5f13-6f6f-5991-b277-2b383baea51d", title = "Packaging the importer with uv" },
+]
+
+[[question]]
+id = "Q022"
+query = "what caused the tag normalizer to split camelCase"
+population = "codex-session"
+expect = [
+  { node_id = "506ebb14-1aee-5781-85fd-124431462b8a", title = "Tag normalizer camelCase split" },
+]
+
+[[question]]
+id = "Q023"
+query = "how does the MCP server negotiate protocol versions"
+population = "codex-session"
+expect = [
+  { node_id = "c3298ea0-c3f0-56af-92ce-38c54ec1de58", title = "MCP protocol negotiation" },
+]
+
+[[question]]
+id = "Q024"
+query = "how were duplicate transcripts detected on import"
+population = "codex-session"
+expect = [
+  { node_id = "4210b963-a6cb-5884-9777-db6ce0e2b917", title = "Duplicate transcript detection" },
+]
+
+[[question]]
+id = "Q025"
+query = "what timeout does the ingest worker use and why"
+population = "codex-session"
+expect = [
+  { node_id = "ba864c86-d478-53a3-a70e-c2e9eca19c06", title = "Ingest worker timeouts" },
+]
+
+# ─── Archived notes ───────────────────────────────────────────────────────
+
+[[question]]
+id = "Q026"
+query = "what did I argue about running language models locally"
+population = "note-archive"
+expect = [
+  { node_id = "a4d8886d-184c-5acf-b39a-078457dc68b8", title = "Running local models" },
+]
+
+[[question]]
+id = "Q027"
+query = "what did I write comparing two self-hosted photo backup tools"
+population = "note-archive"
+expect = [
+  { node_id = "bf42e540-e890-5043-934c-64abb867383b", title = "Self-hosted photo backup comparison" },
+]
+
+[[question]]
+id = "Q028"
+query = "what was my take on static site generators"
+population = "note-archive"
+expect = [
+  { node_id = "b9e28bd4-2657-5c23-ae4a-8be60468dfad", title = "Static site generators" },
+]
+
+# ─── Mail ─────────────────────────────────────────────────────────────────────
+#
+# Each expectation records the Message-ID as its id, the folder it was found in,
+# and a sha256 over the delivered bytes as of authoring. The filename is never an
+# identifier: Maildir flags rewrite it on every flag change, so a filename cannot
+# name a message across two syncs.
+#
+# A mail question may be answered by a message the bulk discriminant classifies
+# as bulk. Such questions belong in a real set deliberately: without them the
+# rule's false-negative direction is assumed rather than exercised, and the
+# ground-truth override is what keeps them answerable.
+
+[[question]]
+id = "MQ01"
+query = "what use cases did the customer want the pilot to cover"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-01.02cf89023e67@example.invalid>"
+title = "Fwd: Pilot scoping notes"
+folder = "Archive"
+content_sha256 = "5165c4fd9b6989eddeec4718c95dbf6408f92901218d0473c8df1ebd77246d99"
+authored_year = "2022"
+
+[[question]]
+id = "MQ02"
+query = "how many records are in the vendor's sample file and do the weights add up"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-02.1960fb079c83@example.invalid>"
+title = "Re: Sample data question"
+folder = "Archive"
+content_sha256 = "f5c747c7922088dedb9597f83411872280a7fb5a955b8cfe2af5ca1f12b4c596"
+authored_year = "2023"
+
+[[question]]
+id = "MQ03"
+query = "what did the consultancy send about the skills mapping and how urgent was it"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-03.7cffba25710c@example.invalid>"
+title = "Fwd: Skills mapping draft"
+folder = "Archive"
+content_sha256 = "5f690c6eb0022e06327fe333a735555217031344b4830fcc667f59ae8f8c70d0"
+authored_year = "2024"
+
+[[question]]
+id = "MQ04"
+query = "when is the quarterly planning offsite and what should we prepare"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-04.0696e7b41f20@example.invalid>"
+title = "Quarterly planning offsite"
+folder = "Inbox"
+content_sha256 = "c91b0119a6567966b2fce80cd835dfebe8f911f47ce7146c375994b62a96ddbd"
+authored_year = "2025"
+
+[[question]]
+id = "MQ05"
+query = "what did the partner ask us to clarify about phase one deployment"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-05.c13037e73e34@example.invalid>"
+title = "Re: Phase one deployment questions"
+folder = "Archive"
+content_sha256 = "5ff12776193f6b787e2aa499785757f2adcc9c162993f72e62576884b3dd6c2c"
+authored_year = "2025"
+
+[[question]]
+id = "MQ06"
+query = "what did the security questionnaire ask about data retention"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-06.9f5ef3d517d9@example.invalid>"
+title = "Re: Security questionnaire"
+folder = "Archive"
+content_sha256 = "02feb5f1aa1a7d2e2611c5ace40b75ad8adfa9eac727197a16f7ce2ff7245f5e"
+authored_year = "2025"
+
+[[question]]
+id = "MQ07"
+query = "how will the client authenticate to the new API"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-07.9048aa12684c@example.invalid>"
+title = "API rollout and authentication"
+folder = "Archive"
+content_sha256 = "73321030df239881cd04acce352e028f196c2b8c94f48bd1b00cfc609c849ca6"
+authored_year = "2025"
+
+[[question]]
+id = "MQ08"
+query = "what caused the late data deliveries and how much was missing"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-08.3d021bd2376a@example.invalid>"
+title = "Data delivery issues"
+folder = "Archive"
+content_sha256 = "ab5611067d2e12ceef32a37fbc96dbbba411ef2d738e9fc3cfd5a45b600c2c4a"
+authored_year = "2025"
+
+[[question]]
+id = "MQ09"
+query = "what format does the vendor deliver repository data in and how fresh is it"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-09.cb0326ca7330@example.invalid>"
+title = "Fwd: Repository data format"
+folder = "Archive"
+content_sha256 = "d63bf6cb65d4b0877e3fb35cdcc8c4ac27c50d8250f59ffc7bc4c85f37d82a97"
+authored_year = "2026"
+
+[[question]]
+id = "MQ10"
+query = "what did the review of the redaction tool conclude"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-10.0c26d5d12c9b@example.invalid>"
+title = "Redaction tool review"
+folder = "Inbox"
+content_sha256 = "a226bb80aa9c39306ccf3df1fc56683ec56af9c777846bc7e96da956a600b2b1"
+authored_year = "2026"
+
+[[question]]
+id = "MQ11"
+query = "what are the next steps after the proof of concept"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-11.3d977ab8a9e1@example.invalid>"
+title = "Proof of concept next steps"
+folder = "Archive"
+content_sha256 = "bc07d607faa925a6c5325be5ebbc7a763fe3eaa7da9ed9a28c660840acbdc582"
+authored_year = "2026"
+
+[[question]]
+id = "MQ12"
+query = "what did the supplier risk review ask about our integration"
+population = "mail"
+[[question.expect]]
+corpus = "mail"
+node_id = "<synthetic-12.67548b03fca1@example.invalid>"
+title = "Fwd: Supplier risk review"
+folder = "Inbox"
+content_sha256 = "a8f82b1fc07b9c46131af412d549943c87468c9387ff2df34e6df976c8d251c6"
+authored_year = "2026"

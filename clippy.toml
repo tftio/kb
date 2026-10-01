@@ -1,0 +1,8 @@
+disallowed-methods = [
+  { path = "std::env::var", reason = "read env only at the process edge (REPO_INVARIANTS.md ENG-013)" },
+  { path = "std::env::var_os", reason = "read env only at the process edge (REPO_INVARIANTS.md ENG-013)" },
+  { path = "std::env::vars", reason = "read env only at the process edge (REPO_INVARIANTS.md ENG-013)" },
+  { path = "std::env::vars_os", reason = "read env only at the process edge (REPO_INVARIANTS.md ENG-013)" },
+  { path = "std::env::set_var", reason = "do not mutate the process environment (REPO_INVARIANTS.md ENG-013)" },
+  { path = "std::env::remove_var", reason = "do not mutate the process environment (REPO_INVARIANTS.md ENG-013)" },
+]

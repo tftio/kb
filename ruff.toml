@@ -1,0 +1,39 @@
+# Ruff governs this repository's Python surface: the kb-import package under
+# `python/`, the other dev scripts under `scripts/`, and their tests. The
+# crate itself is Rust, and ruff never sees it. Ruff's configuration
+# deliberately stays here rather than moving into `[tool.ruff]`, so the
+# Python config surface keeps its own file separate from `pyproject.toml`,
+# which now carries the kb-import project definition and the dev dependency
+# pins.
+target-version = "py313"
+line-length = 100
+include = ["python/**/*.py", "scripts/**/*.py", "tests/**/*.py"]
+
+[lint]
+# An explicit select list rather than `ALL`: `ALL` silently acquires new rules
+# on every ruff upgrade, which turns a version bump into an unrelated diff.
+select = [
+  "A",   # shadowed builtins
+  "ARG", # unused arguments
+  "B",   # bugbear
+  "C4",  # comprehensions
+  "D",   # docstrings
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # import sorting
+  "N",   # naming
+  "PTH", # pathlib over os.path
+  "RET", # return simplification
+  "RUF", # ruff-specific
+  "SIM", # simplification
+  "UP",  # pyupgrade
+  "W",   # pycodestyle warnings
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+# Tests document themselves through their names, and assert-heavy bodies do not
+# benefit from a docstring on every function.
+"tests/**/*.py" = ["D103"]

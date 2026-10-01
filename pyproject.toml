@@ -1,0 +1,57 @@
+# This repository root is two things at once: a Cargo crate and the kb-import
+# Python distribution. kb-import is the transcript importer that used to live
+# as a standalone PEP 723 script at scripts/import_transcripts.py; it is now
+# the installed package python/kb_import, built by hatchling, with its version
+# read out of Cargo.toml's [package] table at build time rather than carried
+# twice. `[tool.uv] package = false` is gone because this directory is now a
+# buildable package.
+#
+# This file also still pins the Python gate's dev tools. `dependency-groups`
+# below replaces `uv run --with pyrefly==... --with pytest==...` in
+# mise.toml. That form pinned the two named packages but re-resolved their
+# entire transitive tree on every invocation, so the gate was not
+# reproducible; a lockfile fixes that and brings these pins under the same
+# `mise run update` / `mise run check:locks` regime as Cargo.lock and
+# mise.lock.
+#
+# `requires-python` is the single declaration of the interpreter constraint.
+# It must agree with `ruff.toml`'s `target-version` and `pyrefly.toml`'s
+# `python-version`. Note it constrains the minor version only: uv is free to
+# pick any 3.13.x patch release.
+[project]
+name = "kb-import"
+dynamic = ["version"]
+description = "Import Claude.ai, ChatGPT, Codex and Claude Code transcripts into the kb knowledge base"
+requires-python = "==3.13.*"
+dependencies = []
+
+[project.scripts]
+kb-import = "kb_import.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The version is not a second copy of the crate version; it is read from the
+# [package] table of Cargo.toml, the same table release-plz bumps on every
+# release. The pattern is anchored to that table's own header and stops at
+# the next table, so a dependency's `version = "..."` later in the file is
+# never a candidate match.
+[tool.hatch.version]
+source = "regex"
+path = "Cargo.toml"
+pattern = '(?sm)^\[package\]\n(?:(?!^\[).)*?^version = "(?P<version>[^"]+)"'
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/kb_import"]
+
+# The sdist carries the Python package and what building it from source
+# needs to read the version, and nothing from the Rust tree: no src/, no
+# Cargo.lock, no target/.
+[tool.hatch.build.targets.sdist]
+include = ["python/", "Cargo.toml", "README.md", "LICENSE", "pyproject.toml"]
+
+# pytest is present for pyrefly as well as for the test run: pyrefly type-checks
+# the test suite, which imports it.
+[dependency-groups]
+dev = ["pyrefly==1.2.0", "pytest==9.1.1"]

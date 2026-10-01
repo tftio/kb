@@ -1,0 +1,43 @@
+# Pyrefly type-checks the Python surface only. Scoped the same way `ruff.toml`
+# is, and for the same reason: the crate is Rust and must stay invisible to
+# both tools.
+project-includes = ["python/**/*.py", "scripts/**/*.py", "tests/**/*.py"]
+python-version = "3.13"
+
+# Worktrees live under `.worktrees/` inside the clone, and two pyrefly
+# mechanisms each exclude every file there, so `pyrefly check` in a worktree
+# reports "No Python files matched" and the pre-commit hook fails:
+#
+# - The ignore-file search walks up past a linked worktree's root and applies
+#   the enclosing checkout's `.git/info/exclude` to it
+#   (https://github.com/facebook/pyrefly/issues/4525, fixed upstream by
+#   PR #4527 after the 1.2.0 pinned here).
+# - The default excludes include `**/.[!/.]*/**`, which matches any path
+#   under a dot-directory, `.worktrees/` included
+#   (https://pyrefly.org/en/docs/configuration/).
+#
+# Turning off both, and listing the excludes this repository needs, lets a
+# worktree check the same files as the main checkout
+# (https://github.com/valsteen/pinboard/pull/85 uses the same pair).
+# `project-includes` above already names the only directories checked, so the
+# explicit list only has to keep caches and virtualenvs out.
+use-ignore-files = false
+disable-project-excludes-heuristics = true
+project-excludes = ["**/__pycache__", "**/.venv/**", "**/.pytest_cache/**"]
+
+# The importer is the installed kb_import package, resolved through `python`
+# on the search path below like any installed package's source. The other dev
+# scripts under `scripts/` are still standalone, imported by name via the path
+# insertion in `tests/conftest.py`; this mirrors that for the type checker, so
+# tests are checked against the real types rather than against `object`.
+# `tests` joins it because `conftest.py` now carries a shared fixture class that
+# the integration tests import by name; pytest puts the directory on the path
+# at run time, and this is the same statement to the type checker.
+search-path = ["python", "scripts", "tests"]
+
+# Strict by default, per the operator's standing Python standard. Untyped
+# definitions and implicit `Any` are errors rather than warnings, so a missing
+# annotation fails the gate instead of silently degrading inference.
+[errors]
+implicitly-defined-attribute = "error"
+implicit-import = "error"

@@ -1,0 +1,27 @@
+
+# Rust
+/target/
+
+# Coverage
+/coverage/
+/coverage-target/
+*.profraw
+
+# Python (the kb_import package under python/, the dev scripts under scripts/, and their tests)
+__pycache__/
+.pytest_cache/
+# uv materializes the gate's dependencies here from pyproject.toml + uv.lock
+.venv/
+
+# Tooling caches
+.direnv/
+/.idea/
+.mise.local.toml
+
+# Nix build output symlink
+/result
+/result-*
+
+# Evaluation output: measured against a local corpus, so never committed
+/resources/eval/runs/
+/resources/eval/generated/

@@ -1,0 +1,50 @@
+# Cold-Start Audit
+
+You are reading a snapshot of a knowledge base. Your goal: produce a
+concise audit of what is in it, what is missing, and where to look next.
+
+## Corpus stats
+
+- nodes recently updated: {{ recent | length }}
+- orphan nodes (no incoming links): {{ orphans | length }}
+- hubs (most-linked nodes): {{ hubs | length }}
+- distinct tags in tag frequency table: {{ tag_frequency | length }}
+
+## Top hubs
+
+{% for h in hubs -%}
+- **{{ h.title }}** (in-degree {{ h.in_degree }}, id `{{ h.id }}`)
+{% endfor %}
+## Recent activity
+
+{% for n in recent[:10] -%}
+### {{ n.title }}
+
+- id: `{{ n.id }}`
+- tags: {{ n.tags | join(", ") }}
+- updated: {{ n.updated_at }}
+
+{{ n.body }}
+
+{% endfor %}
+## Orphans (most recent first)
+
+{% for o in orphans[:10] -%}
+- **{{ o.title }}** (id `{{ o.id }}`) — {{ o.tags | join(", ") }}
+{% endfor %}
+## Tag frequency (top 15)
+
+{% for t in tag_frequency[:15] -%}
+- `{{ t.tag }}` — {{ t.count }} node(s)
+{% endfor %}
+## Your task
+
+Audit this corpus. Identify:
+
+1. Coverage gaps — topics that recur in tags or titles but lack a hub node.
+2. Stale or contradictory entries — anything that looks like duplicate
+   coverage of the same concept under different titles.
+3. Suggested next entries — concrete nodes the operator should write
+   based on what is already present.
+
+Be specific. Quote node ids where helpful.

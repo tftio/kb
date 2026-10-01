@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3623e35f53d79275d1cf0328e0a08f7f111e1e2dd4a6ad5bba29e11b394132bb # shrinks to doc = Document { blocks: [SrcBlock { language: "", content: "a\n\n" }] }
