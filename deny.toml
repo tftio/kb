@@ -10,6 +10,12 @@ git-fetch-with-cli = true
 # published `bisync` version came to sit in this lockfile through green CI
 # until an install on another machine failed. Fail instead.
 yanked = "deny"
+ignore = [
+  # INVARIANT-BYPASS(RS-006): chrono is unmaintained, not vulnerable, and no
+  # version is unaffected. It arrives transitively through rmcp and schemars,
+  # so removing kb's own use would not remove it. Revisit when rmcp drops it.
+  { id = "RUSTSEC-2026-0543", reason = "transitive via rmcp/schemars; no fixed version" },
+]
 
 [licenses]
 allow = [
