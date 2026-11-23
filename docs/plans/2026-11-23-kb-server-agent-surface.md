@@ -374,6 +374,24 @@ Impact on plan: Plan and task graph status set to approved. T004's merge and
 release, and every change to clanker, agent-content and the home directory,
 still need approval at the time.
 
+### 2026-11-23 — jfb (operator), T006 and the release
+
+Question or decision needed: How the kb URL reaches sessions, what to do with
+the old KB_TOKEN secret, and whether to accept the 8.0.0 version release-plz
+proposed.
+
+Decision or guidance received: KB_INGEST_URL comes from the shell (SOPS
+vars.*) and is passed through, not set as a clanker literal. Replace
+env.KB_INGEST_TOKEN with the kb token and remove the unused env.KB_TOKEN.
+Reconciliation context is deferred. Merge release PR #8 as 8.0.0.
+
+Impact on plan: T006 applied except the token copy, which the operator runs.
+The clanker grant is on domain.eng, because clanker grants credentials per
+domain and personal is a context. Captures made through the SessionEnd hook
+carry the clanker context in provenance; T007's launchd reconcile runs outside
+clanker and will need `--context` passed explicitly, since `clanker exec` sets
+no session markers. T004 is done at v8.0.0.
+
 ## Decision Log
 
 Append-only. Decisions affecting architecture, behavior, sequencing, or tradeoffs, as
@@ -702,7 +720,7 @@ tasks:
 
   - id: T004
     title: Release kb with the new surface
-    status: in_progress
+    status: done
     depends_on: [T003]
     owner: null
     description: >
@@ -755,8 +773,20 @@ tasks:
       reports 7.0.1 and `kb-import --version` reports 7.0.1. The remaining risk is
       a client installing kb-import from a different tag or checkout than the kb on
       the server, which README "Installing kb-import" describes.
-      Not done: the pull request, the merge, the release PR and the tag, all of which
-      need operator approval.
+      Release (added 2026-11-23 after the operator approved each merge). The url
+      advisory fix merged first as PR #11 (2d7d144) and the feature branch was
+      rebased onto it. PR #12 (feat/mcp-agent-surface) passed CI and was squash
+      merged as 7bbc9f3. One README correction was added before the push (39690d7):
+      kb has no backfill subcommand, so it was dropped from the operator verb list.
+      The expected 7.1.0 above was wrong. release-plz updated its open release PR
+      #8 to 8.0.0, because cargo-semver-checks reported auto_trait_impl_removed:
+      KbTools (src/mcp.rs:91) is no longer UnwindSafe or RefUnwindSafe, since it now
+      holds an Option<CliEmbedder>. The crate is not published (publish = false), so
+      the operator accepted 8.0.0 and PR #8 was squash merged as caa581c. Release
+      v8.0.0 was published at 2026-11-23T19:41:11Z.
+      Acceptance check: in a detached worktree at tag v8.0.0, `cargo build --bin kb`
+      then `./target/debug/kb meta version` printed "kb 8.0.0", and
+      `uv run kb-import --version` printed "kb-import 8.0.0".
 
   - id: T005
     title: Register the kb server in every agent-content harness package
@@ -790,7 +820,7 @@ tasks:
 
   - id: T006
     title: Pass the kb token and ingest URL into personal sessions
-    status: not_started
+    status: in_progress
     depends_on: []
     owner: null
     description: >
@@ -811,7 +841,24 @@ tasks:
       - "`clanker doctor` passes."
     acceptance_checks:
       - In a new personal clanker session, KB_MCP_TOKEN and KB_INGEST_TOKEN are set, KB_INGEST_URL is https://kb.h.tft.io with no path, and the token's value is never printed during the check.
-    completion_evidence: null
+    completion_evidence: |
+      Partial evidence (2026-11-23). The agent's draft found that clanker has no
+      secret store: a `credentials` entry only passes an already-exported variable
+      through (clanker src/config.rs:172-182, 476-488). Session secrets come from
+      ~/.config/sops/secrets.sops.yaml, which ~/.config/yadm/bin/refresh-local
+      renders into ~/.secrets and ~/.config/fish/config.fish exports. Personal is a
+      context, not a domain, and credentials are granted per domain, so the grant is
+      on domain.eng, the default domain of this session.
+      Applied with operator approval: ~/.config/clanker/local.toml gains
+      [domain.eng] credentials = ["KB_MCP_TOKEN", "KB_INGEST_TOKEN",
+      "KB_INGEST_URL"]; ~/.config/fish/config.fish:107-109 sets KB_MCP_TOKEN from
+      KB_INGEST_TOKEN; SOPS vars.KB_INGEST_URL is set to https://kb.h.tft.io, so the
+      URL comes from the shell (operator choice) and not from a clanker literal; the
+      unused env.KB_TOKEN was removed from SOPS. `sops --unset` is not a flag in
+      sops 3.13.3; `sops unset FILE PATH` worked. `clanker doctor` reports healthy.
+      Not done: the operator copies hemulen's kb.mcp_token into env.KB_INGEST_TOKEN
+      with new-env-secret; the three yadm-tracked files are not committed; the
+      acceptance check in a new personal session has not run.
 
   - id: T007
     title: Schedule reconciliation on the laptop
@@ -1146,7 +1193,7 @@ writing one id at once were not.
 
 ## T004 — Release kb with the new surface
 
-Status: `in_progress`
+Status: `done`
 
 Depends on: T003
 
@@ -1204,8 +1251,20 @@ release-plz bumping Cargo.toml bumps both. At this commit `kb meta version`
 reports 7.0.1 and `kb-import --version` reports 7.0.1. The remaining risk is
 a client installing kb-import from a different tag or checkout than the kb on
 the server, which README "Installing kb-import" describes.
-Not done: the pull request, the merge, the release PR and the tag, all of which
-need operator approval.
+Release (added 2026-11-23 after the operator approved each merge). The url
+advisory fix merged first as PR #11 (2d7d144) and the feature branch was
+rebased onto it. PR #12 (feat/mcp-agent-surface) passed CI and was squash
+merged as 7bbc9f3. One README correction was added before the push (39690d7):
+kb has no backfill subcommand, so it was dropped from the operator verb list.
+The expected 7.1.0 above was wrong. release-plz updated its open release PR
+#8 to 8.0.0, because cargo-semver-checks reported auto_trait_impl_removed:
+KbTools (src/mcp.rs:91) is no longer UnwindSafe or RefUnwindSafe, since it now
+holds an Option<CliEmbedder>. The crate is not published (publish = false), so
+the operator accepted 8.0.0 and PR #8 was squash merged as caa581c. Release
+v8.0.0 was published at 2026-11-23T19:41:11Z.
+Acceptance check: in a detached worktree at tag v8.0.0, `cargo build --bin kb`
+then `./target/debug/kb meta version` printed "kb 8.0.0", and
+`uv run kb-import --version` printed "kb-import 8.0.0".
 
 ## T005 — Register the kb server in every agent-content harness package
 
@@ -1246,7 +1305,7 @@ definition, as `build.bash` already does for OpenCode.
 
 ## T006 — Pass the kb token and ingest URL into personal sessions
 
-Status: `not_started`
+Status: `in_progress`
 
 Depends on: none. It changes clanker and the shell environment only, and can
 run in parallel with T001 to T004.
@@ -1274,7 +1333,23 @@ the kb token on 2026-11-23; the concrete change is shown before it is applied.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Partial evidence (2026-11-23). The agent's draft found that clanker has no
+secret store: a `credentials` entry only passes an already-exported variable
+through (clanker src/config.rs:172-182, 476-488). Session secrets come from
+~/.config/sops/secrets.sops.yaml, which ~/.config/yadm/bin/refresh-local
+renders into ~/.secrets and ~/.config/fish/config.fish exports. Personal is a
+context, not a domain, and credentials are granted per domain, so the grant is
+on domain.eng, the default domain of this session.
+Applied with operator approval: ~/.config/clanker/local.toml gains
+[domain.eng] credentials = ["KB_MCP_TOKEN", "KB_INGEST_TOKEN",
+"KB_INGEST_URL"]; ~/.config/fish/config.fish:107-109 sets KB_MCP_TOKEN from
+KB_INGEST_TOKEN; SOPS vars.KB_INGEST_URL is set to https://kb.h.tft.io, so the
+URL comes from the shell (operator choice) and not from a clanker literal; the
+unused env.KB_TOKEN was removed from SOPS. `sops --unset` is not a flag in
+sops 3.13.3; `sops unset FILE PATH` worked. `clanker doctor` reports healthy.
+Not done: the operator copies hemulen's kb.mcp_token into env.KB_INGEST_TOKEN
+with new-env-secret; the three yadm-tracked files are not committed; the
+acceptance check in a new personal session has not run.
 
 ## T007 — Schedule reconciliation on the laptop
 
