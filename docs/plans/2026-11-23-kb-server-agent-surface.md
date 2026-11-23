@@ -90,7 +90,11 @@ Facts established in the session, from the repositories and the live network:
   (`src/mcp.rs`). The agent capabilities declared in `src/cli_main.rs` number
   twenty-two and include `recent`, `list-by-tag`, `tags` and tag edits,
   `update`, `delete`, `links`, `hubs`, `orphans`, `broken`, `projects`,
-  `similar`, `backfill` and the `prompt` verbs.
+  `similar`, `backfill` and the `prompt` verbs. After this plan the MCP surface
+  has twenty-one tools: the four existing ones, twelve read tools and five
+  write tools (Decision 1). The difference from twenty-two is that `create` is
+  served by the existing `put` tool and `backfill` stays a CLI-only operator
+  verb.
 - The MCP `put` tool writes a record but does not embed it; `kb queue drain`
   embeds what it writes when an embedder is configured (`src/ingest.rs`
   `process`).
@@ -137,6 +141,15 @@ How vectors are keyed. The index's `embeddings` table has primary key
 `(stream_hash, span_start, span_len, model)` (`src/index.rs`). A vector is
 filed under the model name string, and `embed_record` (`src/write.rs`) chunks
 each passage with `embed_text::chunk_span` before embedding.
+
+Tag edits change the stream hash. `add_tags`, `remove_tags` and `merge_tag`
+(`src/write.rs`) write the tag into the document and store it again through
+`put_record`. `put_record` derives the stream from the regenerated document,
+which still contains the `#+filetags:` line or heading tags, so a tag edit
+produces a new `stream_hash`. The record's existing vectors are filed under the
+old hash, so after a tag edit the record has no vectors until it is embedded
+again. This was read from the code on 2026-11-23 and not yet confirmed by a
+test.
 
 Concurrency. The index opens with `PRAGMA journal_mode = WAL`
 (`src/index.rs`). No busy timeout and no store-level write lock were found in
@@ -213,11 +226,14 @@ clients address the server as `https://kb.h.tft.io`, through hemulen's Caddy.
    capability text carries today (for example, read `tags` before tagging).
    `backfill`, `reindex`, `fsck`, `embed` and `queue` stay CLI-only operator
    verbs.
-2. Every server write embeds. `put` and `update` embed the record they
-   write when an embedder is configured, as `kb queue drain` already does. A
-   failure to embed is reported in the tool result and does not undo the
-   write. A scheduled `kb embed` on the host (companion plan) catches up
-   anything missed.
+2. Every server write embeds. `put`, `update`, `tags_add`, `tags_rm` and
+   `tags_merge` embed each record they write when an embedder is configured,
+   as `kb queue drain` already does. The tag tools are included because a tag
+   edit gives the record a new stream hash and so leaves it without vectors
+   (see Context). `delete` writes no record and embeds nothing. A failure to
+   embed is reported in the tool result and does not undo the write. A
+   scheduled `kb embed` on the host (companion plan) catches up anything
+   missed.
 3. Concurrent writers are proven safe before deployment, by a test that
    runs MCP writes and `kb queue drain` against one store and index at once.
    Whatever guard the test shows is needed (a SQLite busy timeout, a store
@@ -228,12 +244,20 @@ clients address the server as `https://kb.h.tft.io`, through hemulen's Caddy.
    its `AgentSurfaceSpec` for the CLI.
 5. clanker passes the token and the ingest URL into personal-context
    sessions: `KB_MCP_TOKEN` and `KB_INGEST_TOKEN` (one secret under two names)
-   and `KB_INGEST_URL=https://kb.h.tft.io/ingest`, or whatever base the
-   `--post` client expects.
+   and `KB_INGEST_URL=https://kb.h.tft.io`. The value is the server's base
+   URL: `IngestClient` (`python/kb_import/ingest.py`) strips a trailing slash
+   and appends `/ingest` and `/ingest/ids` itself, and the `SessionEnd` hook
+   passes `KB_INGEST_URL` to `--post` unchanged. A value ending in `/ingest`
+   would post to `/ingest/ingest`, which the server routes to MCP, not to
+   capture.
 6. The laptop reconciles on a schedule. A launchd agent in the yadm home
    directory runs `kb-import --post <url> --reconcile` periodically.
-7. The client URL is `https://kb.h.tft.io`. `/mcp` for MCP and `/ingest`
-   for capture.
+7. The client URL is `https://kb.h.tft.io`. MCP clients are configured
+   with `https://kb.h.tft.io/mcp`; the server routes every authenticated path
+   other than `/ingest` and `/ingest/ids` to MCP (`src/mcp_http.rs`
+   `ingest_route`), so `/mcp` is a convention, not a route. Capture clients
+   are configured with the base URL only, and `kb-import` adds the `/ingest`
+   paths (Decision 5).
 
 ## Alternatives Considered
 
@@ -306,6 +330,34 @@ Checking what "start fresh" means for clients showed that
 server lacks, so T007 now limits the scheduled reconcile with `--since` set to
 the go-live date.
 
+### 2026-11-23 — jfb (operator), plan review
+
+Question or decision needed: Seven review findings on this plan.
+
+Decision or guidance received: Embed after tag edits; add `kb embed` to the
+concurrency test; leave the cross-plan dependencies unrecorded, since the two
+plans run in parallel and are reconciled when both finish; drop the
+dependencies that are not needed; fix a typo in T007; state how the
+twenty-one MCP tools relate to the twenty-two CLI capabilities.
+
+Impact on plan: Decision 2, T002 and T003 changed; T006 now has no
+dependencies, T005 depends on T006, T007 on T004 and T006, and T008 on T005
+and T007. T002 still depends on T001 because both add tools to `KbTools` in
+`src/mcp.rs`, and doing them in parallel would cause conflicting edits.
+
+### 2026-11-23 — jfb (operator), ingest URL
+
+Question or decision needed: Decision 5 set `KB_INGEST_URL` to the `/ingest`
+path and left the correct form to T006.
+
+Decision or guidance received: Settle it in the plan from the code.
+
+Impact on plan: `python/kb_import/ingest.py` `IngestClient` appends `/ingest`
+and `/ingest/ids` to a base URL, so Decision 5, T006 and T007 now use
+`https://kb.h.tft.io`, and T006 no longer has to determine the form. Decision
+7 now notes that the server routes every non-ingest path to MCP, so `/mcp` is
+a convention.
+
 ## Decision Log
 
 Append-only. Decisions affecting architecture, behavior, sequencing, or tradeoffs, as
@@ -324,6 +376,15 @@ Queries must be embedded on the server whatever happens to documents, and the
 measured throughput of hemulen's embedding server is enough for this corpus.
 Client-side precomputed vectors are deferred with the guard conditions recorded
 in Alternatives Considered.
+
+### 2026-11-23 — D003: tag edits embed the record they rewrite
+
+A tag edit stores the document again with the tag written into it, which
+produces a new `stream_hash`; the record's vectors stay filed under the old
+hash, so without re-embedding, a tag edit removes the record from vector search
+until the scheduled `kb embed` runs. The MCP tag tools therefore embed after
+writing, as `put` and `update` do. T002 confirms the hash change by test before
+relying on it.
 
 # Task Graph
 
@@ -368,14 +429,18 @@ tasks:
       Add MCP tools update, delete, tags_add, tags_rm and tags_merge, each
       calling the domain function its CLI verb calls, with the same
       preservation rules (update and tag edits keep kind, source and
-      provenance). Make put and update embed the record they wrote when an
-      embedder is configured from the environment, using the same embed_record
-      path and chunk size kb queue drain uses. An embedding failure is reported
-      in the tool result and leaves the write in place.
+      provenance). Make put, update, tags_add, tags_rm and tags_merge embed
+      each record they wrote when an embedder is configured from the
+      environment, using the same embed_record path and chunk size kb queue
+      drain uses. Tag edits are included because they give the record a new
+      stream hash, which leaves it without vectors. tags_merge embeds every
+      record it rewrote. An embedding failure is reported in the tool result
+      and leaves the write in place.
     work_items:
       - Add the five write tools with schemas and handlers.
       - Wire an optional embedder into KbTools, built from the environment once at server start.
-      - Embed after put and update; report embedded, skipped, or the failure reason in the result.
+      - Embed after put, update, tags_add, tags_rm and tags_merge; report embedded, skipped, or the failure reason in the result, per record for tags_merge.
+      - Add a test confirming that a tag edit changes the record's stream_hash, so the reason for embedding after tag edits is checked rather than assumed. If the test shows the hash does not change, drop embedding from the tag tools and record that in the Decision Log.
       - Tests for each write tool, for embed-on-write with a test embedder, and for an embedding failure that leaves the record stored.
     invariants:
       - update and tag edits preserve the record's kind, source and provenance exactly as the CLI does (src/write.rs existing_options).
@@ -386,6 +451,7 @@ tasks:
       - "`mise run test` passes."
       - With KB_EMBEDDING_BASE_URL and KB_EMBEDDING_MODEL pointing at a test endpoint, a put over MCP produces embeddings rows for the record's passages.
       - With no embedder configured, put over MCP succeeds and reports that nothing was embedded.
+      - With a test embedder configured, a tags_add over MCP leaves the record with embeddings rows under its new stream_hash.
     completion_evidence: null
 
   - id: T003
@@ -396,13 +462,14 @@ tasks:
     description: >
       On the server, kb-mcp write tools, the kb queue drain timer, and a
       scheduled kb embed write to one store and one index at the same time.
-      Write a test that runs MCP writes and queue drains concurrently against
-      one store and index, then checks that every write is present, the index
-      matches the store (kb fsck reports no drift), and no call failed with a
-      lock error. Add whatever guard the test shows is missing, such as a
-      SQLite busy timeout on every index connection or a store write lock.
+      Write a test that runs MCP writes, queue drains and kb embed
+      concurrently against one store and index, then checks that every write
+      is present, the index matches the store (kb fsck reports no drift), no
+      embedding row is lost or duplicated, and no call failed with a lock
+      error. Add whatever guard the test shows is missing, such as a SQLite
+      busy timeout on every index connection or a store write lock.
     work_items:
-      - Write the concurrency test, running at least two processes or threads that write through different entry points.
+      - Write the concurrency test, running the three writers (MCP write tools, kb queue drain, kb embed) as separate processes or threads against one store and index.
       - Record which failures appear without a guard, if any.
       - Add the minimal guard and record it in REPO_INVARIANTS.md if it is a new rule.
     invariants:
@@ -436,7 +503,7 @@ tasks:
   - id: T005
     title: Register the kb server in every agent-content harness package
     status: not_started
-    depends_on: [T004]
+    depends_on: [T004, T006]
     owner: null
     description: >
       In agent-content, register kb's HTTP MCP server at
@@ -466,16 +533,15 @@ tasks:
   - id: T006
     title: Pass the kb token and ingest URL into personal sessions
     status: not_started
-    depends_on: [T005]
+    depends_on: []
     owner: null
     description: >
       Map the kb token into personal-context sessions as KB_MCP_TOKEN and
-      KB_INGEST_TOKEN, and set KB_INGEST_URL, through clanker's secret-backed
-      environment and the personal domain's credentials list. Decide whether
-      the change belongs in tftio/clanker's config/config.toml or in this
-      machine's ~/.config/clanker/local.toml, and confirm which form
-      kb-import's --post expects (base URL or full /ingest path) by reading
-      python/kb_import/ingest.py. The operator approved widening the filter
+      KB_INGEST_TOKEN, and set KB_INGEST_URL=https://kb.h.tft.io (the base
+      URL; see Decision 5), through clanker's secret-backed environment and
+      the personal domain's credentials list. Decide whether the change
+      belongs in tftio/clanker's config/config.toml or in this machine's
+      ~/.config/clanker/local.toml. The operator approved widening the filter
       for the kb token on 2026-11-23; the concrete change is shown before it
       is applied.
     work_items:
@@ -486,25 +552,25 @@ tasks:
       - No other variable is added to the filter.
       - "`clanker doctor` passes."
     acceptance_checks:
-      - In a new personal clanker session, KB_MCP_TOKEN, KB_INGEST_TOKEN and KB_INGEST_URL are set, and the token's value is never printed during the check.
+      - In a new personal clanker session, KB_MCP_TOKEN and KB_INGEST_TOKEN are set, KB_INGEST_URL is https://kb.h.tft.io with no path, and the token's value is never printed during the check.
     completion_evidence: null
 
   - id: T007
     title: Schedule reconciliation on the laptop
     status: not_started
-    depends_on: [T006]
+    depends_on: [T004, T006]
     owner: null
     description: >
       Add a LaunchAgent to the yadm home directory (an io.tft.kb-reconcile
       plist beside the existing io.tft agents) that runs
-      kb-import --post <url> --reconcile --since <go-live date> on a schedule.
+      kb-import --post <url> --reconcile --since <go-live date> on a schedule,
+      where <url> is the base URL https://kb.h.tft.io (Decision 5).
       Reconcile discovers every session file under the harness configuration
       roots, so without --since its first run would post every transcript
       still on disk (30 under ~/.config/claude on 2026-11-23), which
       contradicts starting the corpus fresh. The go-live date is the date
-      the companion plan's T006 completes. Supply the token and URL
-      supplied the way the home directory supplies secrets to its other
-      agents. Discover that mechanism before writing; if the home directory
+      the companion plan's T006 completes. Supply the token and URL the way
+      the home directory supplies secrets to its other agents. Discover that mechanism before writing; if the home directory
       has none, stop and ask the operator. systems/docs/macos.md mentions an
       io.tft.kb-server orphan in its history; read that history and remove or
       reuse the orphan if it still exists.
@@ -523,7 +589,7 @@ tasks:
   - id: T008
     title: Verify the whole path end to end
     status: not_started
-    depends_on: [T007]
+    depends_on: [T005, T007]
     owner: null
     description: >
       After the companion plan's server is deployed and verified, verify the
@@ -592,11 +658,15 @@ Depends on: T001
 
 Add MCP tools `update`, `delete`, `tags_add`, `tags_rm` and `tags_merge`, each
 calling the domain function its CLI verb calls, with the same preservation
-rules: `update` and tag edits keep kind, source and provenance. Make `put` and
-`update` embed the record they wrote when an embedder is configured from the
-environment, through the same `embed_record` path and chunk size
-`kb queue drain` uses. An embedding failure is reported in the tool result and
-leaves the write in place.
+rules: `update` and tag edits keep kind, source and provenance. Make `put`,
+`update`, `tags_add`, `tags_rm` and `tags_merge` embed each record they wrote
+when an embedder is configured from the environment, through the same
+`embed_record` path and chunk size `kb queue drain` uses. Tag edits are
+included because they give the record a new stream hash, which leaves it
+without vectors (see Context); a test confirms this first, and if the hash
+does not change, the tag tools do not embed and the Decision Log records why.
+`tags_merge` embeds every record it rewrote. An embedding failure is reported
+in the tool result and leaves the write in place.
 
 ### Invariants
 
@@ -614,6 +684,8 @@ leaves the write in place.
   passages.
 - With no embedder configured, `put` over MCP succeeds and reports that nothing
   was embedded.
+- With a test embedder configured, a `tags_add` over MCP leaves the record with
+  `embeddings` rows under its new `stream_hash`.
 
 ### Completion Evidence
 
@@ -630,9 +702,11 @@ Depends on: T002
 On the server, `kb-mcp` write tools, the `kb queue drain` timer and a scheduled
 `kb embed` write to one store and one index at the same time. The index uses
 WAL; no busy timeout or store write lock was found on 2026-11-23. Write a test
-that runs MCP writes and queue drains concurrently against one store and
-index, then checks that every write is present, `kb fsck` reports no drift, and
-no call failed with a lock error. Add whatever guard the test shows is missing.
+that runs all three writers (MCP write tools, `kb queue drain` and `kb embed`)
+concurrently against one store and index, then checks that every write is
+present, `kb fsck` reports no drift, no embedding row is lost or duplicated,
+and no call failed with a lock error. Add whatever guard the test shows is
+missing.
 
 ### Invariants
 
@@ -678,7 +752,8 @@ Merging and releasing need operator approval at the time.
 
 Status: `not_started`
 
-Depends on: T004
+Depends on: T004, T006. T006 is needed because this task's last acceptance
+check requires `KB_MCP_TOKEN` in a personal session.
 
 ### Description
 
@@ -714,17 +789,17 @@ definition, as `build.bash` already does for OpenCode.
 
 Status: `not_started`
 
-Depends on: T005
+Depends on: none. It changes clanker and the shell environment only, and can
+run in parallel with T001 to T004.
 
 ### Description
 
 Map the kb token into personal-context sessions as `KB_MCP_TOKEN` and
-`KB_INGEST_TOKEN`, and set `KB_INGEST_URL`, through clanker's secret-backed
-environment and the personal domain's `credentials` list. Decide whether the
-change belongs in tftio/clanker's `config/config.toml` or in this machine's
-`~/.config/clanker/local.toml`, and confirm which form `kb-import --post`
-expects (base URL or full `/ingest` path) by reading
-`python/kb_import/ingest.py`. The operator approved widening the filter for
+`KB_INGEST_TOKEN`, and set `KB_INGEST_URL=https://kb.h.tft.io` (the base URL;
+see Decision 5), through clanker's secret-backed environment and the personal
+domain's `credentials` list. Decide whether the change belongs in
+tftio/clanker's `config/config.toml` or in this machine's
+`~/.config/clanker/local.toml`. The operator approved widening the filter for
 the kb token on 2026-11-23; the concrete change is shown before it is applied.
 
 ### Invariants
@@ -734,9 +809,9 @@ the kb token on 2026-11-23; the concrete change is shown before it is applied.
 
 ### Acceptance Checks
 
-- In a new personal clanker session, `KB_MCP_TOKEN`, `KB_INGEST_TOKEN` and
-  `KB_INGEST_URL` are set, and the token's value is never printed during the
-  check.
+- In a new personal clanker session, `KB_MCP_TOKEN` and `KB_INGEST_TOKEN` are
+  set, `KB_INGEST_URL` is `https://kb.h.tft.io` with no path, and the token's
+  value is never printed during the check.
 
 ### Completion Evidence
 
@@ -746,13 +821,15 @@ the kb token on 2026-11-23; the concrete change is shown before it is applied.
 
 Status: `not_started`
 
-Depends on: T006
+Depends on: T004 (a released `kb-import` matching the server) and T006 (the
+token's secret source).
 
 ### Description
 
 Add a LaunchAgent to the yadm home directory, an `io.tft.kb-reconcile` plist
 beside the existing `io.tft` agents, that runs
-`kb-import --post <url> --reconcile --since <go-live date>` on a schedule.
+`kb-import --post <url> --reconcile --since <go-live date>` on a schedule,
+where `<url>` is the base URL `https://kb.h.tft.io` (Decision 5).
 Reconcile discovers every session file under the harness configuration roots,
 so without `--since` its first run would post every transcript still on disk
 (30 under `~/.config/claude` on 2026-11-23), which contradicts starting the
@@ -785,7 +862,7 @@ still exists.
 
 Status: `not_started`
 
-Depends on: T007
+Depends on: T005, T007
 
 ### Description
 
