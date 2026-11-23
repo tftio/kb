@@ -25,6 +25,31 @@ use kb::mcp_http::{HttpConfig, HttpServer};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Every tool the surface offers, in listing order.
+const ALL_TOOLS: [&str; 21] = [
+    "search",
+    "context",
+    "get",
+    "put",
+    "recent",
+    "list_by_tag",
+    "tags",
+    "links",
+    "hubs",
+    "orphans",
+    "broken",
+    "projects",
+    "similar",
+    "prompt_list",
+    "prompt_show",
+    "prompt_render",
+    "update",
+    "delete",
+    "tags_add",
+    "tags_rm",
+    "tags_merge",
+];
+
 /// The token every test in this file authenticates with.
 const TOKEN: &str = "a-shared-secret-for-the-operator-network";
 
@@ -315,7 +340,7 @@ fn served(store: &Path, index: &Path) -> Result<Served, Box<dyn std::error::Erro
 // ── the T020 assertions, over HTTP ──────────────────────────────────────
 
 #[test]
-fn the_same_four_tools_are_offered_over_http() -> TestResult {
+fn the_same_twenty_one_tools_are_offered_over_http() -> TestResult {
     let (_dir, store, index) = populated()?;
     let server = served(&store, &index)?;
     let session = server.initialize()?;
@@ -328,7 +353,7 @@ fn the_same_four_tools_are_offered_over_http() -> TestResult {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect();
-    assert_eq!(names, vec!["search", "context", "get", "put"]);
+    assert_eq!(names, ALL_TOOLS);
     Ok(())
 }
 

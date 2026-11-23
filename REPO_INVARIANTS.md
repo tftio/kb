@@ -48,6 +48,7 @@ rebuild would stop being safe and the two would drift without anyone noticing.
 | ST-002 | The index holds only what can be re-derived from the store. Every index table must be droppable and rebuildable from stored bytes alone, and no column may be the only copy of anything. | Tests + review |
 | ST-003 | Nothing reads the store by path. Reads address content by hash through the index; a worktree is a convenience view for humans, not an interface for code, because a path-addressed read is a second source of truth that drifts silently. | Review |
 | ST-004 | Re-derivation is a routine command rather than a recovery procedure: a full rebuild and a rebuild scoped to one corpus, record, or derivation stage are each a single invocation, idempotent, resumable after interruption, and each reports its elapsed time. This is what makes ST-003 hold in practice, since reaching around the index is only attractive while rebuilding is expensive. | Tests + review |
+| ST-005 | Several processes write one store and one index at once (the server, the queue worker, a scheduled embed), so the first open of either must be safe to race. A store is built beside its destination and renamed into place, never initialized in place; an index schema is created only under an exclusive file lock beside the index, after re-reading the schema version under that lock. Creation is never retried on failure: a writer that cannot proceed fails with the reason. | `tests/concurrent_writers.rs` + review |
 
 ## CLI invariants
 

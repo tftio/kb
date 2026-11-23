@@ -614,13 +614,6 @@ impl Index {
                 expected: INDEX_SCHEMA_VERSION,
             });
         }
-        if found == 0 && table_exists(&conn, "records")? {
-            return Err(IndexError::SchemaMismatch {
-                path: path.display().to_string(),
-                found,
-                expected: INDEX_SCHEMA_VERSION,
-            });
-        }
         // An index already at this schema is opened and nothing more. Until
         // T025 every open re-ran the bootstrap, whose `PRAGMA user_version`
         // is a write, so every *read* — each tool call opens the index —
@@ -632,7 +625,55 @@ impl Index {
         if found == INDEX_SCHEMA_VERSION {
             return Ok(Self { conn });
         }
-        Self::bootstrap(conn)
+        Self::create(conn, path)
+    }
+
+    /// Create the schema in an index that has none, once however many
+    /// processes or threads get here together.
+    ///
+    /// Version 0 is what every opener sees until the first one finishes, so
+    /// openers that see it take an exclusive file lock beside the index, and
+    /// the decision is taken again under it: the opener that loses finds the
+    /// schema in place and uses it. Without this a second opener read the
+    /// half-made index as an old schema ("built under schema version 0") and
+    /// failed a write that had done nothing wrong. The schema and its version
+    /// are one transaction, so no opener sees one without the other.
+    ///
+    /// The lock is a file lock rather than `SQLite`'s own write lock because
+    /// the switch to WAL needs the exclusive lock while an opener that is
+    /// merely waiting on the write lock holds a read lock, and `SQLite` answers
+    /// that with "database is locked" at once instead of waiting out the busy
+    /// timeout. With creators queued on the file lock, none of them holds a
+    /// database lock while another switches the mode. Only creation takes it:
+    /// an index at the current schema is opened without it.
+    fn create(conn: Connection, path: &Path) -> Result<Self, IndexError> {
+        let _creating = CreationLock::take(path)?;
+        let found: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if found == INDEX_SCHEMA_VERSION {
+            return Ok(Self { conn });
+        }
+        // Tables with no version stamped is an index from before versions
+        // were kept, refused rather than overlaid.
+        if found != 0 || table_exists(&conn, "records")? {
+            return Err(IndexError::SchemaMismatch {
+                path: path.display().to_string(),
+                found,
+                expected: INDEX_SCHEMA_VERSION,
+            });
+        }
+        conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let stamped = conn
+            .execute_batch(SCHEMA)
+            .and_then(|()| conn.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION));
+        match stamped {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                conn.execute_batch("ROLLBACK")?;
+                return Err(e.into());
+            }
+        }
+        Ok(Self { conn })
     }
 
     /// Open for rebuilding, discarding any index built under another schema.
@@ -1796,6 +1837,36 @@ impl Index {
             }
         }
         Ok(out)
+    }
+}
+
+/// An exclusive lock on the right to create an index's schema, held for the
+/// life of the value and released when it is dropped, or when the process
+/// ends, so a crashed creator cannot leave it held.
+struct CreationLock {
+    _file: std::fs::File,
+}
+
+impl CreationLock {
+    /// Wait for the lock beside `index`. The file is left in place: removing
+    /// it would let one opener lock a file another has just replaced.
+    fn take(index: &Path) -> Result<Self, IndexError> {
+        let mut name = index.as_os_str().to_owned();
+        name.push(".create.lock");
+        let held = |e: std::io::Error| {
+            IndexError::Database(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CANTOPEN),
+                Some(format!("creation lock for {}: {e}", index.display())),
+            ))
+        };
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&name)
+            .map_err(held)?;
+        file.lock().map_err(held)?;
+        Ok(Self { _file: file })
     }
 }
 
