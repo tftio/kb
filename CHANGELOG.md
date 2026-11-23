@@ -1,5 +1,11 @@
 # Changelog
 
+## [8.0.0](https://github.com/tftio/kb/compare/v7.0.1...v8.0.0) - 2026-11-23
+
+### Added
+
+- *(mcp)* serve every agent capability over MCP and embed on write ([#12](https://github.com/tftio/kb/pull/12))
+
 ## [7.0.1](https://github.com/tftio/kb/compare/v7.0.0...v7.0.1) - 2026-11-19
 
 ### Other
