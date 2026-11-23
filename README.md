@@ -85,34 +85,94 @@ toward the figure. The shortfall to 100% is ordinary uncovered error paths
 and format variants, not unreachable code. See RS-007 in
 `REPO_INVARIANTS.md`.
 
-## Retrieval is keyword-only for recent nodes
+## Retrieval and embedding
 
-**The embedding path is deliberately unwired as of 2026-09-16.** `KB_EMBEDDING_BASE_URL`
-and `KB_EMBEDDING_MODEL` were removed from the shell environment, along with
-`KB_INGEST_URL` and `KB_IMPORT_SCRIPT`. Capture was not: the `SessionEnd` hook still distils every
-session in, and the store has kept growing since.
+Search is hybrid: an FTS5 keyword half and a vector half. The vector half
+exists only for records that carry a vector under the configured embedding
+model, and vectors come from an OpenAI-compatible embedding endpoint named by
+two environment variables, `KB_EMBEDDING_BASE_URL` and `KB_EMBEDDING_MODEL`.
+There is no default model: unless both are set, nothing is embedded, and
+nothing guesses a model that would silently score against the wrong vectors.
 
-The consequence is a corpus split at that date:
+The server embeds on write. When `kb-mcp` finds both variables in its
+environment, every record it writes through `put`, `update`, `tags_add`,
+`tags_rm` and `tags_merge` is embedded as part of the write, and the queue
+worker (`kb queue drain`) does the same for captured transcripts. A record
+therefore has vectors as soon as the server has stored it, so `search` and
+`similar` cover recent material and not only records written before some
+cutoff. Tag edits are included because a tag edit rewrites the stored
+document, which gives the record a new stream hash and would otherwise leave it
+without vectors.
 
-| | up to 2026-09-16 | after |
-|---|---|---|
-| keyword search (FTS5) | yes | yes |
-| vector half of `search` | yes | no vector stored |
-| `similar` | yes | fails; the error names `backfill` |
-| `backfill` | n/a | cannot run without an endpoint |
+`kb embed` catches up. It selects the passages in a corpus that have no
+vector under the configured model and embeds them, so it is the repair for
+anything written while the endpoint was unreachable, written by a process that
+had no embedder, or stored before embedding was configured. A run that stops
+partway is resumed by running it again. `kb embed` reads `KB_INDEX_PATH` (or
+`--index`), so run it with the same environment as the server and it embeds
+the index the server writes.
 
-Nothing is lost and nothing is wrong — the vectors written before that date are
-still in the derived index, and every node is still retrievable by keyword, tag,
-and link. But **an empty or thin result from `search` over recent material is not
-evidence of absence.** It may mean only that the node carries no vector, which is
-exactly the failure `search`'s own documentation warns about: a `null` similarity
-means no vector score was computed, not that the node scored zero. Fall back to
-`list-by-tag`, `recent`, and `--match` with an explicit phrase before concluding
-a topic is unrecorded.
+Local CLI use without an embedder is unchanged and not an error. Without the two
+variables, `kb create`, `kb update` and the tag verbs store the record and embed
+nothing, `kb search` falls back to the keyword half, and `kb similar` fails
+with an error that names `kb embed` as the remedy for a record with no
+vector. A thin `search` result for a record that was never embedded is not
+evidence that the topic is unrecorded: try `list-by-tag`, `recent`, or
+`--match` with an explicit phrase before concluding that.
 
-To undo the split, restore the two `KB_EMBEDDING_*` variables and run `backfill`,
-which selects on the absence of a current vector rather than on checkpoint state
-and therefore converges on full coverage however many times it is interrupted.
+## MCP server
+
+`kb-mcp` serves kb's tools over the Model Context Protocol, on stdio by
+default or as streamable HTTP with `--http ADDR`. This is the interface for
+agents that reach a shared corpus: the tools call the same domain functions
+the CLI verbs call, so the two cannot disagree about behaviour. Operator
+maintenance verbs (`reindex`, `fsck`, `embed`, `backfill`, `queue`) are not
+tools and run where the store lives.
+
+Configuration comes from the environment:
+
+| variable | meaning |
+|---|---|
+| `KB_MCP_TOKEN` | Bearer token. Required with `--http`; the server refuses to start without it. Not used on stdio. |
+| `KB_MCP_ALLOWED_HOSTS` | Extra `Host` header values accepted over HTTP, besides the bound address. |
+| `KB_EMBEDDING_BASE_URL`, `KB_EMBEDDING_MODEL` | Optional. The embedding endpoint and model. Set both to embed on write; leave both unset to run without an embedder. |
+| `KB_STORE_PATH`, `KB_INDEX_PATH`, `KB_QUEUE_PATH` | Store, index and capture queue locations (the same variables the CLI reads). |
+
+The server starts without an embedder. If only one of the two embedding
+variables is set, it names the problem on stderr, starts anyway, and stores
+writes unembedded.
+
+There are 21 tools. The read tools return identifiers and titles unless a
+tool's purpose is to return a body, and a list that was cut says so with a
+`total`:
+
+- search, context, get: find records by content, expand a hit's neighbourhood,
+  and fetch one whole document.
+- recent, list_by_tag, tags, projects: browse by recency, tag, tag vocabulary
+  and project.
+- links, hubs, orphans, broken: inspect the link graph.
+- similar: records nearest one record by stored vectors.
+- prompt_list, prompt_show, prompt_render: the prompt templates.
+
+The write tools are deliberate, because they change the corpus:
+
+- put: store a new record.
+- update: replace a record's document, keeping its kind, source and provenance.
+- delete: remove a record by id.
+- tags_add, tags_rm, tags_merge: edit tags without touching the body.
+
+Every tool that writes a record reports what happened to its embedding in an
+`embedding` field of the result. `status` is `disabled` when no endpoint is
+configured, `enabled` when one is (and `records` then lists each record written,
+with `embedded` and `skipped` span counts, or `failed` with the reason), and
+`unchanged` for a tag edit that rewrote nothing. A failure to embed never fails
+or undoes the write: the record is stored, and `kb embed` embeds it later.
+`tags_merge` lists every record it rewrote.
+
+Several processes may write one store and one index at once: the server, the
+queue worker and a scheduled `kb embed`. The first open of either is safe to
+race (`REPO_INVARIANTS.md` ST-005); a lock file named `<index>.create.lock`
+is left beside the index.
 
 ## Mail corpus
 
@@ -132,9 +192,9 @@ kb reindex --maildir ~/Mail          # full rebuild, mail included
 `kb reindex` with neither the flag nor the variable set rebuilds the store's
 corpora and skips mail, saying so on stdout.
 
-## Agent surface
+## CLI agent surface
 
-kb's CLI carries a declarative agent surface (`tftio_lib::AgentSurfaceSpec`)
+kb's CLI also carries a declarative agent surface (`tftio_lib::AgentSurfaceSpec`)
 introspectable through `kb meta agent`:
 
 ```sh

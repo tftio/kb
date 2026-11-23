@@ -702,7 +702,7 @@ tasks:
 
   - id: T004
     title: Release kb with the new surface
-    status: not_started
+    status: in_progress
     depends_on: [T003]
     owner: null
     description: >
@@ -718,7 +718,45 @@ tasks:
       - kb and kb-import carry the same version (README, "Installing kb-import").
     acceptance_checks:
       - A tagged release exists and `kb meta version` and `kb-import --version` built from it report the same version.
-    completion_evidence: null
+    completion_evidence: |
+      Partial evidence (local part only; the pull request, merge and release remain).
+      Files touched: README.md (the section "Retrieval is keyword-only for recent
+      nodes" is replaced by "Retrieval and embedding", which says the server embeds
+      on write and that `kb embed` catches up and keeps the statement about local CLI
+      use without an embedder; a new "MCP server" section lists the 21 tools grouped
+      as read and write, the environment variables KB_MCP_TOKEN, KB_MCP_ALLOWED_HOSTS,
+      KB_EMBEDDING_BASE_URL, KB_EMBEDDING_MODEL and the three path variables, the
+      embedding result shape, and ST-005; the old "Agent surface" heading became "CLI
+      agent surface"); this plan. CHANGELOG.md and every version field are untouched,
+      because release-plz writes them. No host or URL is named in the README.
+      Commands: `mise run ci` from the worktree passed in full, 86s: 902 tests run,
+      902 passed, 9 skipped; check:coverage reported 94.22% line coverage (835 of
+      14446 lines missed); formatting, taplo, shellcheck, typos, clippy, doc, machete,
+      cargo audit, cargo deny, cargo package, lockfiles, ruff, pyrefly, pytest and the
+      kb-import package all passed. cargo audit and cargo deny now pass because main
+      carries the url 2.5.9 fix (commit 2d7d144).
+      Expected release-plz outcome. release-plz.toml sets git_only and
+      release_always = false, and .github/workflows/release-plz.yml runs on every
+      push to main. On merge it opens a release pull request that bumps Cargo.toml
+      and Cargo.lock and writes CHANGELOG.md; merging that pull request tags and
+      publishes the release, and release.yml builds artifacts when the release is
+      published. The commits since v7.0.1 are two feat commits, one fix commit from
+      this branch, the url fix, and docs commits. None carries a "!" marker or a
+      BREAKING CHANGE footer, so the bump is minor: 7.0.1 to 7.1.0. If the pull
+      request is squash merged, the squash commit's subject decides the bump, so its
+      title must be a conventional feat. Behaviour changes a reader might call
+      breaking but that are not marked: the MCP `links` tool fails for an unknown id
+      where the CLI returns empty lists; `kb embed` now reads KB_INDEX_PATH; a lock
+      file `<index>.create.lock` appears beside a new index.
+      Version match. kb-import has no version of its own: pyproject.toml reads it
+      from Cargo.toml's [package] table with a hatch regex at build time, and
+      python/kb_import/__init__.py reports the installed distribution's version, so
+      release-plz bumping Cargo.toml bumps both. At this commit `kb meta version`
+      reports 7.0.1 and `kb-import --version` reports 7.0.1. The remaining risk is
+      a client installing kb-import from a different tag or checkout than the kb on
+      the server, which README "Installing kb-import" describes.
+      Not done: the pull request, the merge, the release PR and the tag, all of which
+      need operator approval.
 
   - id: T005
     title: Register the kb server in every agent-content harness package
@@ -1108,7 +1146,7 @@ writing one id at once were not.
 
 ## T004 — Release kb with the new surface
 
-Status: `not_started`
+Status: `in_progress`
 
 Depends on: T003
 
@@ -1130,7 +1168,44 @@ Merging and releasing need operator approval at the time.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Partial evidence (local part only; the pull request, merge and release remain).
+Files touched: README.md (the section "Retrieval is keyword-only for recent
+nodes" is replaced by "Retrieval and embedding", which says the server embeds
+on write and that `kb embed` catches up and keeps the statement about local CLI
+use without an embedder; a new "MCP server" section lists the 21 tools grouped
+as read and write, the environment variables KB_MCP_TOKEN, KB_MCP_ALLOWED_HOSTS,
+KB_EMBEDDING_BASE_URL, KB_EMBEDDING_MODEL and the three path variables, the
+embedding result shape, and ST-005; the old "Agent surface" heading became "CLI
+agent surface"); this plan. CHANGELOG.md and every version field are untouched,
+because release-plz writes them. No host or URL is named in the README.
+Commands: `mise run ci` from the worktree passed in full, 86s: 902 tests run,
+902 passed, 9 skipped; check:coverage reported 94.22% line coverage (835 of
+14446 lines missed); formatting, taplo, shellcheck, typos, clippy, doc, machete,
+cargo audit, cargo deny, cargo package, lockfiles, ruff, pyrefly, pytest and the
+kb-import package all passed. cargo audit and cargo deny now pass because main
+carries the url 2.5.9 fix (commit 2d7d144).
+Expected release-plz outcome. release-plz.toml sets git_only and
+release_always = false, and .github/workflows/release-plz.yml runs on every
+push to main. On merge it opens a release pull request that bumps Cargo.toml
+and Cargo.lock and writes CHANGELOG.md; merging that pull request tags and
+publishes the release, and release.yml builds artifacts when the release is
+published. The commits since v7.0.1 are two feat commits, one fix commit from
+this branch, the url fix, and docs commits. None carries a "!" marker or a
+BREAKING CHANGE footer, so the bump is minor: 7.0.1 to 7.1.0. If the pull
+request is squash merged, the squash commit's subject decides the bump, so its
+title must be a conventional feat. Behaviour changes a reader might call
+breaking but that are not marked: the MCP `links` tool fails for an unknown id
+where the CLI returns empty lists; `kb embed` now reads KB_INDEX_PATH; a lock
+file `<index>.create.lock` appears beside a new index.
+Version match. kb-import has no version of its own: pyproject.toml reads it
+from Cargo.toml's [package] table with a hatch regex at build time, and
+python/kb_import/__init__.py reports the installed distribution's version, so
+release-plz bumping Cargo.toml bumps both. At this commit `kb meta version`
+reports 7.0.1 and `kb-import --version` reports 7.0.1. The remaining risk is
+a client installing kb-import from a different tag or checkout than the kb on
+the server, which README "Installing kb-import" describes.
+Not done: the pull request, the merge, the release PR and the tag, all of which
+need operator approval.
 
 ## T005 — Register the kb server in every agent-content harness package
 
