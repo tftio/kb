@@ -1,8 +1,11 @@
 //! The agent-facing tool surface, independent of the protocol carrying it.
 //!
-//! Four tools, tiered by token cost: `search` returns identifiers and titles,
+//! The first four tools, tiered by token cost: `search` returns identifiers and titles,
 //! `context` returns a hit's neighbourhood, `get` returns one full document,
-//! and `put` writes one. The tiering is the point rather than an organising
+//! and `put` writes one. Twelve read tools sit beside them (`recent`,
+//! `list_by_tag`, `tags`, `links`, `hubs`, `orphans`, `broken`, `projects`,
+//! `similar` and the three `prompt_*` tools) and return the same shapes the
+//! CLI verbs do, as identifiers and titles. The tiering is the point rather than an organising
 //! convenience — an agent's context budget is the binding constraint, and a
 //! search that returns full documents spends it on the nine results that were
 //! wrong. An agent that learns searching is expensive stops searching, and
@@ -66,6 +69,15 @@ pub trait ToolSurface {
 /// skips what is irrelevant at no cost; an agent pays for every line in the
 /// budget it has left to reason with.
 pub const DEFAULT_SEARCH_RESULTS: usize = 10;
+
+/// How many rows a list-style read tool returns when the caller does not say.
+///
+/// Never larger than the CLI verb's own default (`recent` 50, `hubs` 20,
+/// `similar` 10), and smaller where the CLI has none, for the reason
+/// [`DEFAULT_SEARCH_RESULTS`] is smaller than the CLI's twenty. A list that
+/// was cut reports its full size in `total`, so a short list is never read as
+/// a complete one.
+pub const DEFAULT_LIST_RESULTS: usize = 10;
 
 /// The tool surface over a kb corpus.
 ///
@@ -315,9 +327,373 @@ impl KbTools {
     }
 }
 
+/// A list of `(id, title)` pairs as the tiered summary every list tool shares.
+///
+/// `count` is what is returned and `total` what existed, so an agent that
+/// reads a truncated list can tell it was truncated (`REPO_INVARIANTS.md`
+/// ENG-004).
+fn summaries(pairs: &[(String, String)], limit: usize) -> Value {
+    let mut payload = bounded(pairs, limit);
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("total".to_owned(), json!(pairs.len()));
+    }
+    payload
+}
+
+/// [`summaries`] for a list the index already cut to `limit`, which therefore
+/// cannot say how many there were and does not pretend to.
+fn bounded(pairs: &[(String, String)], limit: usize) -> Value {
+    let rows: Vec<Value> = pairs
+        .iter()
+        .take(limit)
+        .map(|(id, title)| json!({ "id": id, "title": title }))
+        .collect();
+    json!({ "count": rows.len(), "results": rows })
+}
+
+/// One row of the unified link graph, as `kb links` reports it.
+fn link_row(row: &crate::index::IndexLinkRow) -> Value {
+    json!({
+        "source_id": row.source_id,
+        "link_type": row.link_type,
+        "target_id": row.target_id,
+        "target_slug": row.target_slug,
+    })
+}
+
+impl KbTools {
+    /// The most recently updated records, newest first.
+    fn recent(&self, arguments: &Value) -> Result<String, String> {
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let pairs = index
+            .recent(crate::search::CORPUS_KB, limit)
+            .map_err(|e| e.to_string())?;
+        render(&bounded(&pairs, limit))
+    }
+
+    /// Records carrying a tag, under the CLI's tag normalization.
+    fn list_by_tag(&self, arguments: &Value) -> Result<String, String> {
+        let tag = required(arguments, "tag")?;
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let pairs = index
+            .records_tagged(&storage::normalize_tag(tag))
+            .map_err(|e| e.to_string())?;
+        render(&summaries(&pairs, limit))
+    }
+
+    /// The tag vocabulary in use, with a count for each.
+    fn tags(&self, arguments: &Value) -> Result<String, String> {
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let counts = index.tag_counts().map_err(|e| e.to_string())?;
+        let rows: Vec<Value> = counts
+            .iter()
+            .take(limit)
+            .map(|(tag, count)| json!({ "tag": tag, "count": count }))
+            .collect();
+        render(&json!({ "count": rows.len(), "total": counts.len(), "tags": rows }))
+    }
+
+    /// A record's outgoing and incoming links, with their link types.
+    fn links(&self, arguments: &Value) -> Result<String, String> {
+        let id = required(arguments, "id")?;
+        let index = self.open_index()?;
+        if index.record(id).is_err() {
+            return Err(format!("no node with id: {id}"));
+        }
+        let neighborhood = index.links_of(id).map_err(|e| e.to_string())?;
+        render(&json!({
+            "id": id,
+            "outgoing": neighborhood.outgoing.iter().map(link_row).collect::<Vec<_>>(),
+            "incoming": neighborhood.incoming.iter().map(link_row).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// The most-linked records.
+    fn hubs(&self, arguments: &Value) -> Result<String, String> {
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let hubs = index
+            .hubs(crate::search::CORPUS_KB, limit)
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<Value> = hubs
+            .iter()
+            .map(|hub| json!({ "id": hub.id, "title": hub.title, "in_degree": hub.in_degree }))
+            .collect();
+        render(&json!({ "count": rows.len(), "results": rows }))
+    }
+
+    /// Records nothing links to.
+    fn orphans(&self, arguments: &Value) -> Result<String, String> {
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let pairs = index
+            .orphans(crate::search::CORPUS_KB)
+            .map_err(|e| e.to_string())?;
+        render(&summaries(&pairs, limit))
+    }
+
+    /// Bracket references that resolve to no record.
+    fn broken(&self, arguments: &Value) -> Result<String, String> {
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let rows = index.broken_links().map_err(|e| e.to_string())?;
+        let shown: Vec<Value> = rows.iter().take(limit).map(link_row).collect();
+        render(&json!({ "count": shown.len(), "total": rows.len(), "results": shown }))
+    }
+
+    /// Every project slug asserted by a record, with counts.
+    fn projects(&self) -> Result<String, String> {
+        let index = self.open_index()?;
+        let projects = index.project_counts().map_err(|e| e.to_string())?;
+        let no_project = index.records_without_project().map_err(|e| e.to_string())?;
+        render(&json!({
+            "projects": projects.iter().map(|p| json!({
+                "project": p.project,
+                "count": p.count,
+                "newest": p.newest,
+            })).collect::<Vec<_>>(),
+            "noProject": no_project,
+        }))
+    }
+
+    /// The records nearest a record by stored embedding.
+    fn similar(&self, arguments: &Value) -> Result<String, String> {
+        let id = required(arguments, "id")?;
+        let limit = optional_count(arguments, "limit").unwrap_or(DEFAULT_LIST_RESULTS);
+        let index = self.open_index()?;
+        let pairs = crate::search::similar(&index, id, limit).map_err(|e| e.to_string())?;
+        render(&bounded(&pairs, limit))
+    }
+
+    /// The prompt templates available, built in and overridden.
+    fn prompt_list() -> Result<String, String> {
+        let templates: Vec<Value> = crate::prompt::list_templates()
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "source": t.source,
+                    "path": t.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                })
+            })
+            .collect();
+        render(&json!({ "count": templates.len(), "templates": templates }))
+    }
+
+    /// One template's raw source.
+    fn prompt_show(arguments: &Value) -> Result<String, String> {
+        let name = required(arguments, "name")?;
+        let resolved = crate::prompt::resolve_template_source(name).map_err(|e| e.to_string())?;
+        render(&json!({
+            "name": resolved.name,
+            "source": resolved.source,
+            "path": resolved.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            "body": resolved.body,
+        }))
+    }
+
+    /// A template rendered against the live corpus, as text.
+    fn prompt_render(&self, arguments: &Value) -> Result<String, String> {
+        let name = required(arguments, "name")?;
+        let index = self.open_index()?;
+        crate::prompt::render_prompt(&index, name).map_err(|e| e.to_string())
+    }
+}
+
 /// Render a value as the compact JSON a tool returns.
 fn render(value: &Value) -> Result<String, String> {
     serde_json::to_string(value).map_err(|e| e.to_string())
+}
+
+/// The tools that list records and tags: `recent`, `list_by_tag` and `tags`.
+fn read_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "recent",
+            description: "The most recently updated records, newest first, as identifiers and titles. Use it to see what was added or changed lately; use `search` for a topic and `list_by_tag` for a tag.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many records to return. Defaults to 10.",
+                    },
+                },
+                "required": [],
+            }),
+        },
+        ToolSpec {
+            name: "list_by_tag",
+            description: "Records carrying a tag, as identifiers and titles. The tag is normalized as stored tags are, so casing and separators need not match (`Silent Critic` finds `silent-critic`), but a spelling with no word break ('CICD' against 'ci-cd') is a different tag. An empty result is not proof of absence: call `tags` to see the spellings that exist.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "tag": {
+                        "type": "string",
+                        "description": "The tag, without surrounding colons.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many records to return. Defaults to 10; `total` reports how many matched.",
+                    },
+                },
+                "required": ["tag"],
+            }),
+        },
+        ToolSpec {
+            name: "tags",
+            description: "The tag vocabulary in use, with a record count for each, most used first. Read it before tagging a record and reuse an existing spelling: a variant splits records across two tags that no single query returns. Also the first step when `list_by_tag` came back empty.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many tags to return. Defaults to 10; `total` reports how many exist.",
+                    },
+                },
+                "required": [],
+            }),
+        },
+    ]
+}
+
+/// The tools that read the link graph and the project index.
+fn graph_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "links",
+            description: "A record's outgoing and incoming links, each row as `{source_id, link_type, target_id, target_slug}`. `link_type` is `id` or `name`; a `name` row with a null `target_id` is a bracket reference no record answers. Use `context` for neighbour titles; use this when link types matter.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The record's identifier." },
+                },
+                "required": ["id"],
+            }),
+        },
+        ToolSpec {
+            name: "hubs",
+            description: "The most-linked records, ranked by in-degree across id-links and resolved name-links, as `{id, title, in_degree}`. Shows which records the corpus is organised around.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many hubs to return. Defaults to 10.",
+                    },
+                },
+                "required": [],
+            }),
+        },
+        ToolSpec {
+            name: "orphans",
+            description: "Records nothing links to under either link type, as identifiers and titles. Use it to find isolated records; use `list_by_tag`, `recent` or `search` to find records by tag, date or content.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many records to return. Defaults to 10; `total` reports how many exist.",
+                    },
+                },
+                "required": [],
+            }),
+        },
+        ToolSpec {
+            name: "broken",
+            description: "Bracket references that resolve to no record: `name` link rows whose `target_id` is null because no record carries that `#+name:` slug. Id-links cannot be broken. Use `links` to inspect one record.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many rows to return. Defaults to 10; `total` reports how many exist.",
+                    },
+                },
+                "required": [],
+            }),
+        },
+        ToolSpec {
+            name: "projects",
+            description: "Every project slug asserted by at least one record, with its record count and its newest record's date, plus `noProject`, the count of records with none. Call it before filtering `search` by `project`. For the records themselves use `search`.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                },
+                "required": [],
+            }),
+        },
+    ]
+}
+
+/// The tools that read neighbourhoods and templates: `similar` and the
+/// `prompt_*` tools.
+fn neighbour_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "similar",
+            description: "Records semantically nearest a record you already hold, by stored embeddings rather than shared words; the record is never its own neighbour. Use it to follow a thread outward or to spot duplicates. Use `search` when you have a topic and no record. It reads stored vectors only, so it fails rather than degrading for a record that was never embedded, and the error names `kb embed` (the backfill) as the remedy.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The record's identifier." },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many neighbours to return. Defaults to 10.",
+                    },
+                },
+                "required": ["id"],
+            }),
+        },
+        ToolSpec {
+            name: "prompt_list",
+            description: "The prompt templates `prompt_render` can render: built-ins plus user overrides, which win on a name collision. Each is `{name, source, path}`.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                },
+                "required": [],
+            }),
+        },
+        ToolSpec {
+            name: "prompt_show",
+            description: "One prompt template's raw source, whichever of the user override and the built-in wins. Read it to see what a template does before rendering it with `prompt_render`.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Template name, without extension.",
+                    },
+                },
+                "required": ["name"],
+            }),
+        },
+        ToolSpec {
+            name: "prompt_render",
+            description: "Render a named template against the live corpus and return the text. Templates can read `recent`, `orphans`, `hubs` and `tag_frequency`, and call `by_tag`, `search`, `all_nodes`, `get`, `links` and `link_distance`. kb assembles the text; the caller runs it, since kb sends it to no model.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Template name, without extension.",
+                    },
+                },
+                "required": ["name"],
+            }),
+        },
+    ]
 }
 
 impl ToolSurface for KbTools {
@@ -412,6 +788,11 @@ impl ToolSurface for KbTools {
                 }),
             },
         ]
+        .into_iter()
+        .chain(read_specs())
+        .chain(graph_specs())
+        .chain(neighbour_specs())
+        .collect()
     }
 
     fn call(&self, name: &str, arguments: &Value) -> ToolOutcome {
@@ -420,6 +801,18 @@ impl ToolSurface for KbTools {
             "context" => self.context(arguments),
             "get" => self.get(arguments),
             "put" => self.put(arguments),
+            "recent" => self.recent(arguments),
+            "list_by_tag" => self.list_by_tag(arguments),
+            "tags" => self.tags(arguments),
+            "links" => self.links(arguments),
+            "hubs" => self.hubs(arguments),
+            "orphans" => self.orphans(arguments),
+            "broken" => self.broken(arguments),
+            "projects" => self.projects(),
+            "similar" => self.similar(arguments),
+            "prompt_list" => Self::prompt_list(),
+            "prompt_show" => Self::prompt_show(arguments),
+            "prompt_render" => self.prompt_render(arguments),
             other => Err(format!("no such tool: {other}")),
         };
         match outcome {

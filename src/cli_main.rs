@@ -3361,41 +3361,15 @@ fn run_delete(id: &str) -> i32 {
     0
 }
 
-/// What to tell a user whose record has no vector to search from.
-///
-/// An empty success would read as "nothing in the knowledge base resembles
-/// this node", which is a different claim and a false one.
-fn no_embedding_text(id: &str) -> String {
-    format!("no stored embedding for node {id}; run `kb embed` to embed records that have none")
-}
-
 fn run_similar(id: &str, limit: usize, json: JsonOutput) -> i32 {
     let index = match crate::index::Index::open(&crate::index::configured_index_path()) {
         Ok(index) => index,
         Err(e) => return print_error("similar", json, &e.to_string()),
     };
-    // Distinguish an unknown id from a known one that was never embedded:
-    // the remedies differ, and `kb embed` cannot help with a typo.
-    if index.record(id).is_err() {
-        return print_error("similar", json, &format!("no node with id: {id}"));
-    }
-    // The configured model when there is one, else the model this record's
-    // own vectors were computed under: `kb similar` is a read verb and must
-    // keep working while the embedding daemon is restarting.
-    let model = match crate::cli_embed::configured_model() {
-        Some(model) => model,
-        None => match index.model_of(id) {
-            Ok(Some(model)) => model,
-            Ok(None) => return print_error("similar", json, &no_embedding_text(id)),
-            Err(e) => return print_error("similar", json, &e.to_string()),
-        },
-    };
-    let neighbours = match index.similar_to(id, &model, limit) {
-        Ok(Some(neighbours)) => neighbours,
-        Ok(None) => return print_error("similar", json, &no_embedding_text(id)),
+    let pairs = match crate::search::similar(&index, id, limit) {
+        Ok(pairs) => pairs,
         Err(e) => return print_error("similar", json, &e.to_string()),
     };
-    let pairs = named(&index, neighbours.into_iter().map(|(id, _)| id));
     println!(
         "{}",
         render_response(
@@ -3406,19 +3380,6 @@ fn run_similar(id: &str, limit: usize, json: JsonOutput) -> i32 {
         )
     );
     0
-}
-
-/// Pair each identifier with the name the index holds for it.
-fn named(
-    index: &crate::index::Index,
-    ids: impl IntoIterator<Item = String>,
-) -> Vec<(String, String)> {
-    ids.into_iter()
-        .map(|id| {
-            let title = index.record(&id).map(|row| row.title).unwrap_or_default();
-            (id, title)
-        })
-        .collect()
 }
 
 fn run_recent(limit: usize, json: JsonOutput) -> i32 {

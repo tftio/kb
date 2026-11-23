@@ -17,6 +17,26 @@ use serde_json::{Value, json};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Every tool the surface offers, in listing order.
+const ALL_TOOLS: [&str; 16] = [
+    "search",
+    "context",
+    "get",
+    "put",
+    "recent",
+    "list_by_tag",
+    "tags",
+    "links",
+    "hubs",
+    "orphans",
+    "broken",
+    "projects",
+    "similar",
+    "prompt_list",
+    "prompt_show",
+    "prompt_render",
+];
+
 /// A running `kb-mcp` process, with the session already initialized.
 struct Session {
     child: Child,
@@ -192,7 +212,7 @@ fn populated() -> Result<(tempfile::TempDir, std::path::PathBuf), Box<dyn std::e
 }
 
 #[test]
-fn the_server_announces_four_tools_with_schemas() -> TestResult {
+fn the_server_announces_sixteen_tools_with_schemas() -> TestResult {
     let (_dir, db) = populated()?;
     let mut session = Session::start(&db)?;
     let response = session.request("tools/list", &json!({}))?;
@@ -205,7 +225,7 @@ fn the_server_announces_four_tools_with_schemas() -> TestResult {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect();
-    assert_eq!(names, vec!["search", "context", "get", "put"]);
+    assert_eq!(names, ALL_TOOLS);
     for tool in tools {
         let schema = tool
             .get("inputSchema")

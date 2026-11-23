@@ -402,6 +402,16 @@ until the scheduled `kb embed` runs. The MCP tag tools therefore embed after
 writing, as `put` and `update` do. T002 confirms the hash change by test before
 relying on it.
 
+### 2026-11-23 — D004: `similar` resolves through `search::similar`
+
+The CLI kept the choice of embedding model and the three failure cases (unknown
+id, no stored vector, unreadable index) inside `run_similar`, so the MCP tool
+could not call it. T001 moved that logic into `search::similar` with a typed
+`SimilarError`, and `kb similar` now calls it, so the two surfaces cannot
+disagree about when `similar` fails. The no-vector message names `kb embed`
+and the word backfill together, because the CLI text and the capability text
+had named different remedies. Reversible: the function is a straight move.
+
 # Task Graph
 
 <!-- TASK_GRAPH:BEGIN -->
@@ -409,7 +419,7 @@ relying on it.
 tasks:
   - id: T001
     title: Add the read tools to the MCP surface
-    status: not_started
+    status: done
     depends_on: []
     owner: null
     description: >
@@ -434,7 +444,39 @@ tasks:
       - "`mise run test` passes."
       - "`mise run ci` passes."
       - An MCP tools/list against `kb-mcp` (stdio) lists the four existing tools and the twelve new ones.
-    completion_evidence: null
+    completion_evidence: |
+      Files touched: src/mcp.rs (twelve handlers at lines 366-505, specs in
+      read_specs, graph_specs and neighbour_specs at 512-700, DEFAULT_LIST_RESULTS
+      at line 80, dispatch in call); src/search.rs (new SimilarError and
+      similar, lines 455-518); src/cli_main.rs (run_similar at line 3364 now
+      calls search::similar; no_embedding_text and named removed);
+      tests/mcp_read_tools.rs (new, 17 ToolSurface::call tests); tests/mcp_stdio.rs
+      and tests/mcp_http.rs (the tool-list tests now assert all sixteen names in
+      order).
+      Commands: `mise run test` passed, 882 run, 882 passed, 9 skipped. `mise run
+      ci`: fmt, taplo, shellcheck, typos, clippy, nextest, doc, machete, package,
+      lockfiles, ruff, pyrefly, pytest and kb-import package passed; check:coverage
+      ran and reported 94.25% line coverage against the 93% floor, without error;
+      `cargo audit` and `cargo deny` failed on RUSTSEC-2026-0592 (url 2.5.8,
+      stack overflow in Url::origin on nested blob: URLs). Cargo.lock is unchanged
+      by this task, and `cargo update -p url` locked 0 packages, so no fixed url
+      was available to the resolver on 2026-11-23. The failure is independent of
+      this change and needs a dependency bump once url 2.5.9 resolves.
+      tools/list over stdio: with `kb-mcp` run under a scratch HOME and
+      KB_STORE_PATH and KB_INDEX_PATH set, the initialize, notifications/initialized
+      and tools/list lines piped to the binary returned 16 tools: search, context,
+      get, put, recent, list_by_tag, tags, links, hubs, orphans, broken, projects,
+      similar, prompt_list, prompt_show, prompt_render. The same list over HTTP is
+      asserted by tests/mcp_http.rs the_same_sixteen_tools_are_offered_over_http.
+      Deviations: (1) similar needed a domain function, because the CLI kept the
+      model choice and the no-vector error inside run_similar; it moved to
+      search::similar and both callers use it (Decision Log D004). (2) The CLI's
+      no-vector message named `kb embed`, while the capability text said backfill;
+      the shared message now names both. (3) links fails for an unknown id, as
+      context does, where the CLI returns empty lists. (4) List tools without a
+      CLI limit (list_by_tag, tags, orphans, broken) take a limit defaulting to
+      10 and report total, so a cut list says it was cut; recent defaults to 10
+      against the CLI's 50, hubs to 10 against 20.
 
   - id: T002
     title: Add the write tools and embed every server write
@@ -631,7 +673,7 @@ tasks:
 
 ## T001 — Add the read tools to the MCP surface
 
-Status: `not_started`
+Status: `done`
 
 Depends on: none
 
@@ -662,7 +704,43 @@ description, shortened for an agent's context budget.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Files touched: `src/mcp.rs` (handlers at lines 366-505, tool specs at 512-700,
+`DEFAULT_LIST_RESULTS` at line 80); `src/search.rs` (`SimilarError` and
+`similar`, lines 455-518); `src/cli_main.rs` (`run_similar` at line 3364 calls
+`search::similar`; `no_embedding_text` and `named` removed);
+`tests/mcp_read_tools.rs` (new, 17 `ToolSurface::call` tests);
+`tests/mcp_stdio.rs` and `tests/mcp_http.rs` (tool-list tests assert all sixteen
+names).
+
+Commands:
+
+- `mise run test`: passed, 882 run, 882 passed, 9 skipped.
+- `mise run ci`: formatting, clippy, nextest, doc, machete, package, lockfile
+  and Python checks passed. `check:coverage` reported 94.25% line coverage
+  against the 93% floor. `cargo audit` and `cargo deny` failed on
+  RUSTSEC-2026-0592 (`url` 2.5.8). `Cargo.lock` is unchanged by this task and
+  `cargo update -p url` locked 0 packages, so no fixed `url` resolved on
+  2026-11-23. The failure does not depend on this change.
+- stdio `tools/list`: `kb-mcp` run under a scratch `HOME` with
+  `KB_STORE_PATH` and `KB_INDEX_PATH` set, given initialize,
+  `notifications/initialized` and `tools/list` on stdin, returned 16 tools:
+  search, context, get, put, recent, list_by_tag, tags, links, hubs, orphans,
+  broken, projects, similar, prompt_list, prompt_show, prompt_render. The HTTP
+  list is asserted by `the_same_sixteen_tools_are_offered_over_http`.
+
+Deviations from the plan:
+
+- `similar` needed a domain function: the CLI held the model choice and the
+  no-vector error inside `run_similar`. It moved to `search::similar` and both
+  callers use it (D004).
+- The CLI's no-vector message named `kb embed` while the capability text said
+  backfill. The shared message now names both.
+- `links` fails for an unknown id, as `context` does; the CLI returns empty
+  lists.
+- List tools with no CLI limit (`list_by_tag`, `tags`, `orphans`, `broken`) take
+  a `limit` defaulting to 10 and report `total`. `recent` defaults to 10
+  (CLI 50) and `hubs` to 10 (CLI 20).
+
 
 ## T002 — Add the write tools and embed every server write
 

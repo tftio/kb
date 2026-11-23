@@ -450,3 +450,69 @@ fn name(index: &index::Index, scored: &[(String, Option<f32>)], corpus: &str) ->
         })
         .collect()
 }
+
+/// Why [`similar`] produced no neighbours.
+///
+/// The three cases have three remedies, which is why they are three variants
+/// and not one message: a typo in an identifier is fixed by the caller, a
+/// record that was never embedded by embedding it, and a damaged index by
+/// reindexing. An empty success would claim the corpus holds nothing like the
+/// record, which is a different and false statement.
+#[derive(Debug, thiserror::Error)]
+pub enum SimilarError {
+    /// No record carries this identifier.
+    #[error("no node with id: {0}")]
+    UnknownNode(String),
+    /// The record exists but has no stored vector to search from.
+    #[error(
+        "no stored embedding for node {0}; run `kb embed` to backfill embeddings for records \
+         that have none"
+    )]
+    NoEmbedding(String),
+    /// The derived index could not be read.
+    #[error(transparent)]
+    Index(#[from] index::IndexError),
+}
+
+/// The records nearest `id` by stored embedding, as `(id, title)` pairs in
+/// descending similarity.
+///
+/// Reads stored vectors only and contacts no endpoint, so it keeps working
+/// while the embedding daemon is down. The model is the configured one when
+/// there is one, else the model this record's own vectors were computed
+/// under. `kb similar` and the agent surface's `similar` tool both resolve
+/// through here.
+///
+/// # Errors
+///
+/// [`SimilarError::UnknownNode`] for an identifier the index does not hold,
+/// [`SimilarError::NoEmbedding`] for a record with no vector, and
+/// [`SimilarError::Index`] when the index cannot be read.
+pub fn similar(
+    index: &index::Index,
+    id: &str,
+    limit: usize,
+) -> Result<Vec<(String, String)>, SimilarError> {
+    if index.record(id).is_err() {
+        return Err(SimilarError::UnknownNode(id.to_owned()));
+    }
+    let model = match crate::cli_embed::configured_model() {
+        Some(model) => model,
+        None => index
+            .model_of(id)?
+            .ok_or_else(|| SimilarError::NoEmbedding(id.to_owned()))?,
+    };
+    let neighbours = index
+        .similar_to(id, &model, limit)?
+        .ok_or_else(|| SimilarError::NoEmbedding(id.to_owned()))?;
+    Ok(neighbours
+        .into_iter()
+        .map(|(neighbour, _)| {
+            let title = index
+                .record(&neighbour)
+                .map(|row| row.title)
+                .unwrap_or_default();
+            (neighbour, title)
+        })
+        .collect())
+}
