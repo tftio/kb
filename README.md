@@ -126,8 +126,8 @@ evidence that the topic is unrecorded: try `list-by-tag`, `recent`, or
 default or as streamable HTTP with `--http ADDR`. This is the interface for
 agents that reach a shared corpus: the tools call the same domain functions
 the CLI verbs call, so the two cannot disagree about behaviour. Operator
-maintenance verbs (`reindex`, `fsck`, `embed`, `backfill`, `queue`) are not
-tools and run where the store lives.
+maintenance verbs (`reindex`, `fsck`, `embed`, `queue`) are not tools and run
+where the store lives.
 
 Configuration comes from the environment:
 
