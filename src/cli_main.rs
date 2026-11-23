@@ -2255,7 +2255,7 @@ fn run_embed(
         Ok(embedder) => embedder,
         Err(error) => return print_error(command, JsonOutput::Text, &error.to_string()),
     };
-    let path = index_path.map_or_else(crate::index::default_index_path, ToOwned::to_owned);
+    let path = index_path.map_or_else(crate::index::configured_index_path, ToOwned::to_owned);
     let index = match crate::index::Index::open(&path) {
         Ok(index) => index,
         Err(error) => return print_error(command, JsonOutput::Text, &error.to_string()),

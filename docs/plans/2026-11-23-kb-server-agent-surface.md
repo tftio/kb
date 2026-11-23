@@ -424,6 +424,26 @@ and the server starts in both cases. `CliEmbedder` also changed to shut its
 runtime down in the background, because dropping it inside the server's runtime
 panicked at shutdown.
 
+### 2026-11-23 — D006: index creation is serialized by a file lock; the store is renamed into place
+
+The T003 test showed three first-open faults and no write-conflict fault. The
+store is now built beside its destination and renamed into place, so a second
+opener never sees a half-made repository. For the index, the first attempt
+(`BEGIN IMMEDIATE` around schema creation, after `PRAGMA journal_mode = WAL`)
+failed in every run with "database is locked", raised by the WAL switch: two
+openers each hold a read lock while waiting for the exclusive one, and SQLite
+returns busy at once for that case instead of waiting out the busy timeout.
+The second attempt (`BEGIN IMMEDIATE` first, the creator switches to WAL after
+the commit) passed 23 of 25 runs; the two failures were the creator's WAL
+switch against openers inside their own transactions. The third, an exclusive
+file lock held by every opener that sees schema version 0, with the version
+re-read under it, passed 25 of 25 and 60 of 60. The file lock was one of the
+two guards the task named, so it was not a change of design; the plan's Context
+statement that no busy timeout existed was wrong (rusqlite sets five seconds on
+every connection), so none was added. Recorded as ST-005 in REPO_INVARIANTS.md.
+Reversible: both guards are local to `Index::open` and
+`GitBlobStore::open_or_init`.
+
 # Task Graph
 
 <!-- TASK_GRAPH:BEGIN -->
@@ -575,7 +595,7 @@ tasks:
 
   - id: T003
     title: Prove concurrent server writers are safe
-    status: not_started
+    status: done
     depends_on: [T002]
     owner: null
     description: >
@@ -597,7 +617,88 @@ tasks:
     acceptance_checks:
       - The concurrency test passes repeatedly (at least 20 consecutive runs).
       - "`kb fsck` against the test's store and index reports no drift."
-    completion_evidence: null
+    completion_evidence: |
+      Files touched: tests/concurrent_writers.rs (new, 5 tests); src/index.rs
+      (Index::open at 603 now calls Index::create at 649 when the schema version is
+      0; CreationLock at 1846); src/store.rs (GitBlobStore::open_or_init at 363
+      builds the repository beside its destination and renames it into place;
+      REPOSITORIES_BUILT at 334); src/cli_main.rs (run_embed at 2258 reads
+      configured_index_path); REPO_INVARIANTS.md (new row ST-005).
+      The test. tests/concurrent_writers.rs runs separate processes against one
+      store, one index and one queue that have never been written: one kb-mcp over
+      stdio that is sent a pipelined burst of tool calls before any answer is read
+      (so it holds them in flight together), repeated `kb queue drain` and
+      `kb embed --corpus kb` processes, and eight processes opening a missing index
+      at the same moment (embed, queue drain and tags). Embedding uses a mockito
+      endpoint, as in T002. Each scenario runs over six fresh worlds. The five tests
+      are: mcp_writes_queue_drains_and_embeds_overlap_safely (ten MCP puts, then five
+      tags_add and five update calls, against four queue drains of eight submissions
+      and four embeds); processes_opening_a_missing_index_together_all_succeed;
+      tool_calls_in_one_server_on_a_fresh_index_all_succeed;
+      a_new_store_created_by_the_server_and_the_worker_together_holds_both;
+      concurrent_writes_to_one_record_leave_the_index_agreeing_with_the_store
+      (twelve concurrent updates of one id). After the writers stop, each test checks
+      that every expected id has a store ref and an index row and has vectors, that
+      the index holds no extra records, that the embeddings table has no repeated
+      (stream_hash, span_start, span_len, model), that `kb fsck --no-legacy` prints
+      "the index agrees with the store", and that a final `kb embed` reports 0 spans
+      embedded (so no vector was missing). Any tool call or process failure fails
+      the test with its own text.
+      Failures seen with no guard (the test written first; kb embed pointed at the
+      configured index, see below). The command was `cargo test --test
+      concurrent_writers`, run three times, and all four tests that existed then
+      failed in all three runs, in the first round. Error texts:
+      "the index at <path> was built under schema version 0; this build writes
+      version 6" (IndexError::SchemaMismatch, from kb embed and from kb-mcp tool
+      calls: a second opener read the half-made index as an old schema);
+      "could not open or create the blob store at <path>: Could not open data at
+      '<path>'" (an opener found the store directory while another was still
+      initializing it); "could not open or create the blob store at <path>: Refusing
+      to initialize the non-empty directory as '<path>'" (an opener tried to
+      initialize a directory another had just begun to fill). No "database is locked"
+      appeared on an index that already existed: with the creation faults fixed, the
+      overlap test, which has MCP writes, drains and embeds writing the same index,
+      passed every run, because rusqlite already installs a five-second busy timeout
+      on every connection. The plan's Context said no busy timeout existed; that was
+      wrong, so no busy timeout was added.
+      A pre-existing defect found by the first run: `kb embed` without --index
+      opened default_index_path() (under HOME) and ignored KB_INDEX_PATH, although
+      its help says it defaults to the configured path, so with the server's
+      environment it would have embedded a different index from the one the server
+      writes. It now uses configured_index_path.
+      Guards added. (1) Store: open_or_init initializes a bare repository in a
+      uniquely named sibling directory (pid and a per-process counter, because the
+      server's threads share a pid) and renames it to the store path, then opens the
+      store path; a process that loses the rename removes its directory and opens the
+      winner's. The repository appears whole or not at all. (2) Index: when the
+      schema version is 0 the opener takes an exclusive file lock beside the index
+      (`<index>.create.lock`, left in place), re-reads the version under it, and
+      only then switches to WAL and creates the schema and version in one
+      BEGIN IMMEDIATE transaction. An index at the current schema is opened without
+      the lock, so reads are unchanged. No retry loop, sleep or timeout was added.
+      Intermediate attempts are in Decision Log D006: a BEGIN IMMEDIATE transaction
+      alone failed with "database is locked" from the WAL switch (all runs), and
+      moving the WAL switch after the commit reduced it to 2 failed runs in 25 (the
+      WAL switch by the creator racing openers holding read locks, shown by labelling
+      the statement); the file lock removed it.
+      Commands and results. Loop, final code: `cargo test --test concurrent_writers`
+      run 25 times in a shell loop, 25 passed, 0 failed; the prebuilt test binary
+      run 60 times, 60 passed (all five tests each time). `mise run test`: 902 run,
+      902 passed, 9 skipped. `mise run ci`: passed check for added large files,
+      check toml, check yaml, cargo fmt --check, taplo, shellcheck, typos, cargo
+      clippy, cargo nextest, cargo doc, cargo machete, cargo package, lockfiles
+      current, ruff, pyrefly, pytest, kb-import package; check:coverage reported
+      94.22% line coverage against the 93% floor; cargo audit and cargo deny failed
+      on RUSTSEC-2026-0592 (url 2.5.8), the known failure fixed on a separate PR to
+      main. Cargo.toml and Cargo.lock are unchanged.
+      Open concerns. (1) The creation lock file `index.db.create.lock` stays beside
+      the index. (2) An index created by a process that died part way is not left half made: the schema and its version commit together, and the WAL switch happens before them under the same lock. (3) `kb mail embed`, `kb mail index` and `kb generate` still
+      use default_index_path() with their own --index flags and ignore
+      KB_INDEX_PATH; not changed here. (4) Store ref updates of the same name by two
+      writers were exercised only through twelve concurrent MCP updates of one
+      record, which agreed with the store; the CLI writers and the queue worker
+      writing one id at once were not.
+
 
   - id: T004
     title: Release kb with the new surface
@@ -897,7 +998,7 @@ cover.
 
 ## T003 — Prove concurrent server writers are safe
 
-Status: `not_started`
+Status: `done`
 
 Depends on: T002
 
@@ -924,7 +1025,86 @@ missing.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Files touched: tests/concurrent_writers.rs (new, 5 tests); src/index.rs
+(Index::open at 603 now calls Index::create at 649 when the schema version is
+0; CreationLock at 1846); src/store.rs (GitBlobStore::open_or_init at 363
+builds the repository beside its destination and renames it into place;
+REPOSITORIES_BUILT at 334); src/cli_main.rs (run_embed at 2258 reads
+configured_index_path); REPO_INVARIANTS.md (new row ST-005).
+The test. tests/concurrent_writers.rs runs separate processes against one
+store, one index and one queue that have never been written: one kb-mcp over
+stdio that is sent a pipelined burst of tool calls before any answer is read
+(so it holds them in flight together), repeated `kb queue drain` and
+`kb embed --corpus kb` processes, and eight processes opening a missing index
+at the same moment (embed, queue drain and tags). Embedding uses a mockito
+endpoint, as in T002. Each scenario runs over six fresh worlds. The five tests
+are: mcp_writes_queue_drains_and_embeds_overlap_safely (ten MCP puts, then five
+tags_add and five update calls, against four queue drains of eight submissions
+and four embeds); processes_opening_a_missing_index_together_all_succeed;
+tool_calls_in_one_server_on_a_fresh_index_all_succeed;
+a_new_store_created_by_the_server_and_the_worker_together_holds_both;
+concurrent_writes_to_one_record_leave_the_index_agreeing_with_the_store
+(twelve concurrent updates of one id). After the writers stop, each test checks
+that every expected id has a store ref and an index row and has vectors, that
+the index holds no extra records, that the embeddings table has no repeated
+(stream_hash, span_start, span_len, model), that `kb fsck --no-legacy` prints
+"the index agrees with the store", and that a final `kb embed` reports 0 spans
+embedded (so no vector was missing). Any tool call or process failure fails
+the test with its own text.
+Failures seen with no guard (the test written first; kb embed pointed at the
+configured index, see below). The command was `cargo test --test
+concurrent_writers`, run three times, and all four tests that existed then
+failed in all three runs, in the first round. Error texts:
+"the index at <path> was built under schema version 0; this build writes
+version 6" (IndexError::SchemaMismatch, from kb embed and from kb-mcp tool
+calls: a second opener read the half-made index as an old schema);
+"could not open or create the blob store at <path>: Could not open data at
+'<path>'" (an opener found the store directory while another was still
+initializing it); "could not open or create the blob store at <path>: Refusing
+to initialize the non-empty directory as '<path>'" (an opener tried to
+initialize a directory another had just begun to fill). No "database is locked"
+appeared on an index that already existed: with the creation faults fixed, the
+overlap test, which has MCP writes, drains and embeds writing the same index,
+passed every run, because rusqlite already installs a five-second busy timeout
+on every connection. The plan's Context said no busy timeout existed; that was
+wrong, so no busy timeout was added.
+A pre-existing defect found by the first run: `kb embed` without --index
+opened default_index_path() (under HOME) and ignored KB_INDEX_PATH, although
+its help says it defaults to the configured path, so with the server's
+environment it would have embedded a different index from the one the server
+writes. It now uses configured_index_path.
+Guards added. (1) Store: open_or_init initializes a bare repository in a
+uniquely named sibling directory (pid and a per-process counter, because the
+server's threads share a pid) and renames it to the store path, then opens the
+store path; a process that loses the rename removes its directory and opens the
+winner's. The repository appears whole or not at all. (2) Index: when the
+schema version is 0 the opener takes an exclusive file lock beside the index
+(`<index>.create.lock`, left in place), re-reads the version under it, and
+only then switches to WAL and creates the schema and version in one
+BEGIN IMMEDIATE transaction. An index at the current schema is opened without
+the lock, so reads are unchanged. No retry loop, sleep or timeout was added.
+Intermediate attempts are in Decision Log D006: a BEGIN IMMEDIATE transaction
+alone failed with "database is locked" from the WAL switch (all runs), and
+moving the WAL switch after the commit reduced it to 2 failed runs in 25 (the
+WAL switch by the creator racing openers holding read locks, shown by labelling
+the statement); the file lock removed it.
+Commands and results. Loop, final code: `cargo test --test concurrent_writers`
+run 25 times in a shell loop, 25 passed, 0 failed; the prebuilt test binary
+run 60 times, 60 passed (all five tests each time). `mise run test`: 902 run,
+902 passed, 9 skipped. `mise run ci`: passed check for added large files,
+check toml, check yaml, cargo fmt --check, taplo, shellcheck, typos, cargo
+clippy, cargo nextest, cargo doc, cargo machete, cargo package, lockfiles
+current, ruff, pyrefly, pytest, kb-import package; check:coverage reported
+94.22% line coverage against the 93% floor; cargo audit and cargo deny failed
+on RUSTSEC-2026-0592 (url 2.5.8), the known failure fixed on a separate PR to
+main. Cargo.toml and Cargo.lock are unchanged.
+Open concerns. (1) The creation lock file `index.db.create.lock` stays beside
+the index. (2) An index created by a process that died part way is not left half made: the schema and its version commit together, and the WAL switch happens before them under the same lock. (3) `kb mail embed`, `kb mail index` and `kb generate` still
+use default_index_path() with their own --index flags and ignore
+KB_INDEX_PATH; not changed here. (4) Store ref updates of the same name by two
+writers were exercised only through twelve concurrent MCP updates of one
+record, which agreed with the store; the CLI writers and the queue worker
+writing one id at once were not.
 
 ## T004 — Release kb with the new surface
 

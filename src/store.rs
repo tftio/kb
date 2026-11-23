@@ -329,6 +329,10 @@ pub struct GitBlobStore {
     repo: gix::Repository,
 }
 
+/// Counts the repositories this process has begun building, so concurrent
+/// first writers in one process name their scratch directories apart.
+static REPOSITORIES_BUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl GitBlobStore {
     /// Open an existing store, refusing to create one.
     ///
@@ -357,23 +361,56 @@ impl GitBlobStore {
     /// [`StoreError::Open`] if the path holds something that is not a usable
     /// repository, or if creating one fails.
     pub fn open_or_init(path: &Path) -> Result<Self, StoreError> {
-        let opened = gix::open(path).or_else(|_| {
-            // The store's parent is created on the way. Since T029 the first
-            // `kb create` on a machine is what brings the store into
-            // existence, and failing because `~/.local/share/kb` does not
-            // exist yet would make a first write an installation step.
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| StoreError::Open {
-                    path: parent.display().to_string(),
-                    reason: e.to_string(),
-                })?;
-            }
-            gix::init_bare(path).map_err(|e| StoreError::Open {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            })
+        if let Ok(repo) = gix::open(path) {
+            return Ok(Self { repo });
+        }
+        let open_error = |reason: String| StoreError::Open {
+            path: path.display().to_string(),
+            reason,
+        };
+        // The store's parent is created on the way. Since T029 the first
+        // `kb create` on a machine is what brings the store into
+        // existence, and failing because `~/.local/share/kb` does not
+        // exist yet would make a first write an installation step.
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|e| StoreError::Open {
+            path: parent.display().to_string(),
+            reason: e.to_string(),
         })?;
-        Ok(Self { repo: opened })
+        // The repository is built beside its destination and renamed into
+        // place, so it appears whole or not at all. The server, the queue
+        // worker and a scheduled embed can all be the first writer on a new
+        // machine; initializing in place let one of them open a directory
+        // another was still filling ("Could not open data") or refuse to
+        // initialize it ("non-empty directory"), and either failed a write
+        // that had done nothing wrong. A process that loses the rename opens
+        // the winner's repository.
+        let name = path
+            .file_name()
+            .map_or_else(|| "store".into(), |name| name.to_string_lossy());
+        // Threads of one server share a pid, so a counter keeps their
+        // directories apart as the pid keeps processes apart.
+        let building = parent.join(format!(
+            ".{name}.init-{}-{}",
+            std::process::id(),
+            REPOSITORIES_BUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        // A directory left by an earlier crash of this same pid is not valid
+        // state to build on.
+        if building.exists() {
+            std::fs::remove_dir_all(&building).map_err(|e| open_error(e.to_string()))?;
+        }
+        gix::init_bare(&building).map_err(|e| open_error(e.to_string()))?;
+        let renamed = std::fs::rename(&building, path);
+        if renamed.is_err() {
+            std::fs::remove_dir_all(&building).map_err(|e| open_error(e.to_string()))?;
+        }
+        gix::open(path)
+            .map(|repo| Self { repo })
+            .map_err(|e| open_error(e.to_string()))
     }
 }
 
