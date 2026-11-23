@@ -790,7 +790,7 @@ tasks:
 
   - id: T005
     title: Register the kb server in every agent-content harness package
-    status: not_started
+    status: in_progress
     depends_on: [T004, T006]
     owner: null
     description: >
@@ -816,11 +816,36 @@ tasks:
       - "`mise run build` output contains the kb server definition in each harness package and no token value."
       - "`mise run validate` passes."
       - After an approved reinstall, `claude mcp list` in a personal clanker session lists kb as connected once the server is deployed.
-    completion_evidence: null
+    completion_evidence: |
+      Partial evidence (2026-11-23). agent-content PR #52 (branch feat/kb-mcp-server,
+      commits dc804c2, 08b0eae, e06befd, all signed). Claude: plugin.json mcpServers.kb
+      is an http server with Authorization "Bearer ${KB_MCP_TOKEN}" (docs
+      code.claude.com/docs/en/mcp). OpenCode: reconcile_opencode_mcp adds a remote kb
+      server with {env:KB_MCP_TOKEN} and oauth false in the flat mcp.<name> shape that
+      mnene uses; OpenCode 2.x documents a nested shape and still accepts the flat
+      one. Pi: packages cannot declare MCP servers, so hooks/pi/kb-mcp.mjs registers
+      kb through pi.registerMcpServer when KB_MCP_TOKEN is set; untested in a live
+      Pi session. Codex: plugin MCP configs have no env-var bearer field, so
+      install_codex_root reconciles [mcp_servers.kb] with bearer_token_env_var into
+      each Codex root's config.toml (text-level edit of that one table, re-parsed
+      with taplo before writing); doctor reports roots without it. install-kb-skills
+      is deleted and doctor reports leftover kb-* skill directories. Prompter
+      fragments that named the kb-* skills or the CLI (kb-triggers, kb-capture,
+      kb-query, mnene-triggers, four domain fragments) now name the MCP tools, and
+      the composition-eval goldens were regenerated.
+      Results: mise run check, test-kb-mcp, test-codex-kb-config, test-pi and the
+      composition evals pass; a sentinel-token build finds the token in no
+      generated file. mise run validate fails on four planner cross-validator
+      fixtures, which fail identically on agent-content origin/main.
+      Operator-approved install-side action: the 63 installed kb-* skill
+      directories (21 each under ~/.config/claude/personal/skills,
+      ~/.config/codex/personal/skills and ~/.pi/agent/skills) were removed.
+      Not done: merging PR #52, the reinstall, and the claude mcp list check, which
+      also needs the deployed server.
 
   - id: T006
     title: Pass the kb token and ingest URL into personal sessions
-    status: in_progress
+    status: done
     depends_on: []
     owner: null
     description: >
@@ -859,7 +884,18 @@ tasks:
       Not done: the operator copies hemulen's kb.mcp_token into env.KB_INGEST_TOKEN
       with new-env-secret; the three yadm-tracked files are not committed; the
       acceptance check in a new personal session has not run.
-
+      Completed 2026-11-23. The operator's token step was run by the agent with
+      approval: hemulen's kb.mcp_token was decrypted into a shell variable and
+      stored with new-env-secret as env.KB_INGEST_TOKEN (63 characters; the value
+      was not printed). yadm commit cd8b4e9 (signed, not pushed) holds only
+      ~/.config/sops/secrets.sops.yaml, ~/.config/clanker/local.toml and
+      ~/.config/fish/config.fish; unrelated staged files were left staged.
+      Acceptance check, as run: in a fresh interactive login fish shell,
+      KB_MCP_TOKEN and KB_INGEST_TOKEN are set and equal and KB_INGEST_URL is
+      https://kb.h.tft.io; `clanker --json env claude` resolves context personal and
+      domain eng, and its removed_environment list contains no KB_* name, so the
+      filter passes all three. The check was not run inside a launched session,
+      because the executing session predates the change. clanker doctor is healthy.
   - id: T007
     title: Schedule reconciliation on the laptop
     status: not_started
@@ -1268,7 +1304,7 @@ then `./target/debug/kb meta version` printed "kb 8.0.0", and
 
 ## T005 — Register the kb server in every agent-content harness package
 
-Status: `not_started`
+Status: `in_progress`
 
 Depends on: T004, T006. T006 is needed because this task's last acceptance
 check requires `KB_MCP_TOKEN` in a personal session.
@@ -1301,11 +1337,35 @@ definition, as `build.bash` already does for OpenCode.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Partial evidence (2026-11-23). agent-content PR #52 (branch feat/kb-mcp-server,
+commits dc804c2, 08b0eae, e06befd, all signed). Claude: plugin.json mcpServers.kb
+is an http server with Authorization "Bearer ${KB_MCP_TOKEN}" (docs
+code.claude.com/docs/en/mcp). OpenCode: reconcile_opencode_mcp adds a remote kb
+server with {env:KB_MCP_TOKEN} and oauth false in the flat mcp.<name> shape that
+mnene uses; OpenCode 2.x documents a nested shape and still accepts the flat
+one. Pi: packages cannot declare MCP servers, so hooks/pi/kb-mcp.mjs registers
+kb through pi.registerMcpServer when KB_MCP_TOKEN is set; untested in a live
+Pi session. Codex: plugin MCP configs have no env-var bearer field, so
+install_codex_root reconciles [mcp_servers.kb] with bearer_token_env_var into
+each Codex root's config.toml (text-level edit of that one table, re-parsed
+with taplo before writing); doctor reports roots without it. install-kb-skills
+is deleted and doctor reports leftover kb-* skill directories. Prompter
+fragments that named the kb-* skills or the CLI (kb-triggers, kb-capture,
+kb-query, mnene-triggers, four domain fragments) now name the MCP tools, and
+the composition-eval goldens were regenerated.
+Results: mise run check, test-kb-mcp, test-codex-kb-config, test-pi and the
+composition evals pass; a sentinel-token build finds the token in no
+generated file. mise run validate fails on four planner cross-validator
+fixtures, which fail identically on agent-content origin/main.
+Operator-approved install-side action: the 63 installed kb-* skill
+directories (21 each under ~/.config/claude/personal/skills,
+~/.config/codex/personal/skills and ~/.pi/agent/skills) were removed.
+Not done: merging PR #52, the reinstall, and the claude mcp list check, which
+also needs the deployed server.
 
 ## T006 — Pass the kb token and ingest URL into personal sessions
 
-Status: `in_progress`
+Status: `done`
 
 Depends on: none. It changes clanker and the shell environment only, and can
 run in parallel with T001 to T004.
@@ -1350,6 +1410,19 @@ sops 3.13.3; `sops unset FILE PATH` worked. `clanker doctor` reports healthy.
 Not done: the operator copies hemulen's kb.mcp_token into env.KB_INGEST_TOKEN
 with new-env-secret; the three yadm-tracked files are not committed; the
 acceptance check in a new personal session has not run.
+
+Completed 2026-11-23. The operator's token step was run by the agent with
+approval: hemulen's kb.mcp_token was decrypted into a shell variable and
+stored with new-env-secret as env.KB_INGEST_TOKEN (63 characters; the value
+was not printed). yadm commit cd8b4e9 (signed, not pushed) holds only
+~/.config/sops/secrets.sops.yaml, ~/.config/clanker/local.toml and
+~/.config/fish/config.fish; unrelated staged files were left staged.
+Acceptance check, as run: in a fresh interactive login fish shell,
+KB_MCP_TOKEN and KB_INGEST_TOKEN are set and equal and KB_INGEST_URL is
+https://kb.h.tft.io; `clanker --json env claude` resolves context personal and
+domain eng, and its removed_environment list contains no KB_* name, so the
+filter passes all three. The check was not run inside a launched session,
+because the executing session predates the change. clanker doctor is healthy.
 
 ## T007 — Schedule reconciliation on the laptop
 
