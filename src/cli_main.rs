@@ -23,7 +23,6 @@ use crate::parser;
 use crate::prompt;
 use crate::retrieval;
 use crate::storage;
-use crate::store::BlobStore as _;
 use tftio_org::ast::Document;
 
 // ── Agent surface ──────────────────────────────────────────────────────
@@ -3249,9 +3248,7 @@ fn embed_written_record(index: &crate::index::Index, id: &str) {
             return;
         }
     };
-    if let Err(e) =
-        crate::write::embed_record(index, &embedder, id, crate::cli_embed::DOCUMENT_CHUNK_CHARS)
-    {
+    if let Err(e) = crate::write::embed_written(index, &embedder, id) {
         eprintln!("kb: node {id} was stored without an embedding: {e}");
         eprintln!("kb: run `kb embed` once the endpoint is available");
     }
@@ -3334,28 +3331,17 @@ fn run_delete(id: &str) -> i32 {
             return 1;
         }
     };
-    let name = match crate::store::RefName::new(&format!("{CORPUS_KB}/{id}")) {
-        Ok(name) => name,
+    match crate::write::delete_record(&store, &index, id) {
+        Ok(()) => {}
+        Err(e @ crate::write::DeleteError::IndexRemains { .. }) => {
+            eprintln!("kb: {e}");
+            eprintln!("kb: run `kb fsck --repair` to reconcile");
+            return 1;
+        }
         Err(e) => {
             eprintln!("kb: {e}");
             return 1;
         }
-    };
-    match store.delete_ref(&name) {
-        Ok(true) => {}
-        Ok(false) => {
-            eprintln!("kb: no node with id: {id}");
-            return 1;
-        }
-        Err(e) => {
-            eprintln!("kb: delete failed: {e}");
-            return 1;
-        }
-    }
-    if let Err(e) = index.forget(id) {
-        eprintln!("kb: {id} was unbound but its index rows remain: {e}");
-        eprintln!("kb: run `kb fsck --repair` to reconcile");
-        return 1;
     }
     println!("deleted {id}");
     0

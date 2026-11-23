@@ -96,7 +96,7 @@ fn sorted(mut values: Vec<String>) -> Vec<String> {
 }
 
 #[test]
-fn the_surface_lists_sixteen_tools_and_the_required_fields_match_the_cli() -> TestResult {
+fn the_surface_lists_twenty_one_tools_and_the_required_fields_match_the_cli() -> TestResult {
     let corpus = corpus()?;
     let specs = corpus.tools.specs();
     let names: Vec<&str> = specs.iter().map(|spec| spec.name).collect();
@@ -119,6 +119,11 @@ fn the_surface_lists_sixteen_tools_and_the_required_fields_match_the_cli() -> Te
             "prompt_list",
             "prompt_show",
             "prompt_render",
+            "update",
+            "delete",
+            "tags_add",
+            "tags_rm",
+            "tags_merge",
         ]
     );
     let required = |name: &str| -> Vec<String> {
@@ -140,6 +145,11 @@ fn the_surface_lists_sixteen_tools_and_the_required_fields_match_the_cli() -> Te
     assert_eq!(required("similar"), ["id"]);
     assert_eq!(required("prompt_show"), ["name"]);
     assert_eq!(required("prompt_render"), ["name"]);
+    assert_eq!(required("update"), ["id", "document"]);
+    assert_eq!(required("delete"), ["id"]);
+    assert_eq!(required("tags_add"), ["id", "tags"]);
+    assert_eq!(required("tags_rm"), ["id", "tags"]);
+    assert_eq!(required("tags_merge"), ["from", "to"]);
     for name in [
         "recent",
         "tags",

@@ -450,13 +450,8 @@ fn process(
             .map_err(|e| format!("the record could not be stored: {e}"))?;
     }
     if let Some(embedder) = embedder {
-        crate::write::embed_record(
-            index,
-            embedder,
-            &pending.submission.id,
-            crate::cli_embed::DOCUMENT_CHUNK_CHARS,
-        )
-        .map_err(|e| format!("stored, but could not embed: {e}"))?;
+        crate::write::embed_written(index, embedder, &pending.submission.id)
+            .map_err(|e| format!("stored, but could not embed: {e}"))?;
     }
     Ok(())
 }

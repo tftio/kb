@@ -448,6 +448,74 @@ pub fn embed_record(
     Ok(done)
 }
 
+/// Embed the record a write just produced, at the chunk size every write path
+/// uses.
+///
+/// The one place the chunk size for written records is chosen: `kb queue
+/// drain`, the CLI's write verbs and the MCP write tools all call this rather
+/// than each naming [`crate::cli_embed::DOCUMENT_CHUNK_CHARS`], so they cannot
+/// drift onto different tilings of the same record.
+///
+/// # Errors
+///
+/// As [`embed_record`].
+pub fn embed_written(
+    index: &Index,
+    embedder: &crate::cli_embed::CliEmbedder,
+    id: &str,
+) -> Result<Embedded, EmbedRecordError> {
+    embed_record(index, embedder, id, crate::cli_embed::DOCUMENT_CHUNK_CHARS)
+}
+
+/// Why deleting a record failed.
+#[derive(Debug, Error)]
+pub enum DeleteError {
+    /// The record's name could not be formed from the identifier.
+    #[error(transparent)]
+    Name(crate::store::StoreError),
+    /// No record is bound under the identifier.
+    #[error("no node with id: {0}")]
+    NoSuchRecord(String),
+    /// The store could not remove the binding.
+    #[error("delete failed: {0}")]
+    Unbind(crate::store::StoreError),
+    /// The name was removed but the index still holds the record's rows.
+    #[error("{id} was unbound but its index rows remain: {source}")]
+    IndexRemains {
+        /// The record whose rows remain.
+        id: String,
+        /// Why they could not be forgotten.
+        #[source]
+        source: crate::index::IndexError,
+    },
+}
+
+/// Delete a record: unbind its name and forget its index rows.
+///
+/// The blobs stay addressable, so a deletion is recoverable by anyone who kept
+/// the address and the prior document is not erased; packing is what
+/// eventually reclaims the space.
+///
+/// # Errors
+///
+/// [`DeleteError`] naming which step refused. After
+/// [`DeleteError::IndexRemains`] `kb fsck --repair` reconciles the index.
+pub fn delete_record(store: &impl BlobStore, index: &Index, id: &str) -> Result<(), DeleteError> {
+    let name =
+        RefName::new(&format!("{}/{id}", crate::search::CORPUS_KB)).map_err(DeleteError::Name)?;
+    match store.delete_ref(&name) {
+        Ok(true) => {}
+        Ok(false) => return Err(DeleteError::NoSuchRecord(id.to_owned())),
+        Err(e) => return Err(DeleteError::Unbind(e)),
+    }
+    index
+        .forget(id)
+        .map_err(|source| DeleteError::IndexRemains {
+            id: id.to_owned(),
+            source,
+        })
+}
+
 /// Why embedding one record stopped.
 #[derive(Debug, Error)]
 pub enum EmbedRecordError {

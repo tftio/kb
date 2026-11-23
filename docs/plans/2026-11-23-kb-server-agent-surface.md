@@ -412,6 +412,18 @@ disagree about when `similar` fails. The no-vector message names `kb embed`
 and the word backfill together, because the CLI text and the capability text
 had named different remedies. Reversible: the function is a straight move.
 
+### 2026-11-23 — D005: the tag-edit hash change is confirmed; the embedder is injected
+
+T002 confirmed by test that add_tags changes the record's stream_hash, so D003
+stands unchanged and the tag tools embed. The embedder reaches the tool surface
+as a value (`KbTools::with_embedder`), built once by `kb-mcp` from the
+environment, rather than being read inside `src/mcp.rs`. That keeps the surface
+independent of the environment (ENG-010) and lets tests hand it a mock
+endpoint. An unset endpoint is silent, a half-configured one is named on stderr,
+and the server starts in both cases. `CliEmbedder` also changed to shut its
+runtime down in the background, because dropping it inside the server's runtime
+panicked at shutdown.
+
 # Task Graph
 
 <!-- TASK_GRAPH:BEGIN -->
@@ -480,7 +492,7 @@ tasks:
 
   - id: T002
     title: Add the write tools and embed every server write
-    status: not_started
+    status: done
     depends_on: [T001]
     owner: null
     description: >
@@ -510,7 +522,56 @@ tasks:
       - With KB_EMBEDDING_BASE_URL and KB_EMBEDDING_MODEL pointing at a test endpoint, a put over MCP produces embeddings rows for the record's passages.
       - With no embedder configured, put over MCP succeeds and reports that nothing was embedded.
       - With a test embedder configured, a tags_add over MCP leaves the record with embeddings rows under its new stream_hash.
-    completion_evidence: null
+    completion_evidence: |
+      Files touched: src/mcp.rs (with_embedder at line 130, embedding_report at 141,
+      handlers update, delete, edit_tags and tags_merge at 379-475, write_specs at
+      857, dispatch at 1041); src/write.rs (embed_written at 462, DeleteError at 472,
+      delete_record at 503); src/cli_embed.rs (CliEmbedder drops its runtime in the
+      background, Drop at 270); src/bin/kb-mcp.rs (embedder_from_env at 85, built
+      once at start); src/cli_main.rs (run_delete at 3326 and embed_written_record at
+      3241 now call the shared functions); src/ingest.rs (process at 453 calls
+      embed_written); tests/mcp_write_tools.rs (new, 14 tests); tests/mcp_stdio.rs,
+      tests/mcp_http.rs and tests/mcp_read_tools.rs (tool lists now assert all
+      twenty-one names in order, and the new required fields).
+      Commands: the stream-hash test (a_tag_edit_gives_the_record_a_new_stream_hash)
+      was written first and passed: the hash before and after add_tags differ, so D003
+      stands. `mise run test` passed, 897 run, 897 passed, 9 skipped. `mise run ci`:
+      formatting, taplo, shellcheck, typos, clippy, nextest, doc, machete, package,
+      lockfiles and the Python checks passed; check:coverage reported 94.28% line
+      coverage against the 93% floor; `cargo audit` and `cargo deny` failed on
+      RUSTSEC-2026-0592 (url 2.5.8), the known failure that is independent of this
+      change. Cargo.toml and Cargo.lock are unchanged.
+      Live check: kb-mcp over stdio under a scratch HOME with KB_STORE_PATH and
+      KB_INDEX_PATH set. tools/list returned 21 tools. With no embedder, put returned
+      embedding.status "disabled" and the record was stored; tags_add did the same.
+      With a local fake endpoint (a Python server answering /v1/embeddings) and
+      KB_EMBEDDING_BASE_URL and KB_EMBEDDING_MODEL set, put returned one record with
+      status "embedded", embedded 1, and so did tags_add; the server exited 0 when
+      stdin closed. With KB_EMBEDDING_BASE_URL set and no model, the server started,
+      named the problem on stderr and stored writes unembedded.
+      Result shape: every writing tool returns embedding as {status, records}, where
+      status is "disabled" (no endpoint), "enabled" (records lists one entry per
+      record with status "embedded" and embedded and skipped counts, or "failed" with
+      the reason), or "unchanged" (a tag edit that rewrote nothing, so nothing was
+      embedded). tags_merge lists every rewritten record.
+      Deviations: (1) The chunk size for written records was a constant named at each
+      call site, not a selection; embed_written now names it once and the CLI, the
+      queue worker and the MCP tools all call it. (2) delete had no domain function,
+      only CLI code; it moved to write::delete_record with a typed DeleteError, and
+      `kb delete` calls it with unchanged messages. The store keeps no audit log:
+      "keeps its audit record" holds as the store behaves today, where delete unbinds
+      the name and the blobs stay addressable by hash. (3) A real defect found by the
+      live check: dropping a CliEmbedder inside the server's async runtime panicked at
+      shutdown. CliEmbedder now shuts its runtime down in the background, and a test
+      drops a surface holding an embedder inside a runtime. (4) A tag edit that
+      changed nothing reports "unchanged" and does not embed. (5) update does not take
+      provenance_json; the CLI's flag is not in this task. (6) tags_add, tags_rm and
+      update take a tags argument as arrays of strings; tags_add and tags_rm require
+      at least one.
+      Open concern for T003: in a first pipelined session, two tool calls sent back to
+      back against an empty index raced on creating it (the second saw schema version
+      0). Calls are dispatched concurrently, so this is the kind of fault T003 should
+      cover.
 
   - id: T003
     title: Prove concurrent server writers are safe
@@ -744,7 +805,7 @@ Deviations from the plan:
 
 ## T002 — Add the write tools and embed every server write
 
-Status: `not_started`
+Status: `done`
 
 Depends on: T001
 
@@ -783,7 +844,56 @@ in the tool result and leaves the write in place.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Files touched: src/mcp.rs (with_embedder at line 130, embedding_report at 141,
+handlers update, delete, edit_tags and tags_merge at 379-475, write_specs at
+857, dispatch at 1041); src/write.rs (embed_written at 462, DeleteError at 472,
+delete_record at 503); src/cli_embed.rs (CliEmbedder drops its runtime in the
+background, Drop at 270); src/bin/kb-mcp.rs (embedder_from_env at 85, built
+once at start); src/cli_main.rs (run_delete at 3326 and embed_written_record at
+3241 now call the shared functions); src/ingest.rs (process at 453 calls
+embed_written); tests/mcp_write_tools.rs (new, 14 tests); tests/mcp_stdio.rs,
+tests/mcp_http.rs and tests/mcp_read_tools.rs (tool lists now assert all
+twenty-one names in order, and the new required fields).
+
+Commands: the stream-hash test (a_tag_edit_gives_the_record_a_new_stream_hash)
+was written first and passed: the hash before and after add_tags differ, so D003
+stands. `mise run test` passed, 897 run, 897 passed, 9 skipped. `mise run ci`:
+formatting, taplo, shellcheck, typos, clippy, nextest, doc, machete, package,
+lockfiles and the Python checks passed; check:coverage reported 94.28% line
+coverage against the 93% floor; `cargo audit` and `cargo deny` failed on
+RUSTSEC-2026-0592 (url 2.5.8), the known failure that is independent of this
+change. Cargo.toml and Cargo.lock are unchanged.
+Live check: kb-mcp over stdio under a scratch HOME with KB_STORE_PATH and
+KB_INDEX_PATH set. tools/list returned 21 tools. With no embedder, put returned
+embedding.status "disabled" and the record was stored; tags_add did the same.
+With a local fake endpoint (a Python server answering /v1/embeddings) and
+KB_EMBEDDING_BASE_URL and KB_EMBEDDING_MODEL set, put returned one record with
+status "embedded", embedded 1, and so did tags_add; the server exited 0 when
+stdin closed. With KB_EMBEDDING_BASE_URL set and no model, the server started,
+named the problem on stderr and stored writes unembedded.
+Result shape: every writing tool returns embedding as {status, records}, where
+status is "disabled" (no endpoint), "enabled" (records lists one entry per
+record with status "embedded" and embedded and skipped counts, or "failed" with
+the reason), or "unchanged" (a tag edit that rewrote nothing, so nothing was
+embedded). tags_merge lists every rewritten record.
+Deviations: (1) The chunk size for written records was a constant named at each
+call site, not a selection; embed_written now names it once and the CLI, the
+queue worker and the MCP tools all call it. (2) delete had no domain function,
+only CLI code; it moved to write::delete_record with a typed DeleteError, and
+`kb delete` calls it with unchanged messages. The store keeps no audit log:
+"keeps its audit record" holds as the store behaves today, where delete unbinds
+the name and the blobs stay addressable by hash. (3) A real defect found by the
+live check: dropping a CliEmbedder inside the server's async runtime panicked at
+shutdown. CliEmbedder now shuts its runtime down in the background, and a test
+drops a surface holding an embedder inside a runtime. (4) A tag edit that
+changed nothing reports "unchanged" and does not embed. (5) update does not take
+provenance_json; the CLI's flag is not in this task. (6) tags_add, tags_rm and
+update take a tags argument as arrays of strings; tags_add and tags_rm require
+at least one.
+Open concern for T003: in a first pipelined session, two tool calls sent back to
+back against an empty index raced on creating it (the second saw schema version
+0). Calls are dispatched concurrently, so this is the kind of fault T003 should
+cover.
 
 ## T003 — Prove concurrent server writers are safe
 

@@ -5,7 +5,10 @@
 //! and `put` writes one. Twelve read tools sit beside them (`recent`,
 //! `list_by_tag`, `tags`, `links`, `hubs`, `orphans`, `broken`, `projects`,
 //! `similar` and the three `prompt_*` tools) and return the same shapes the
-//! CLI verbs do, as identifiers and titles. The tiering is the point rather than an organising
+//! CLI verbs do, as identifiers and titles. Five more (`update`, `delete`,
+//! `tags_add`, `tags_rm`, `tags_merge`) change what exists, and every write
+//! that stores a record embeds it when an endpoint is configured, reporting
+//! the outcome in its result without ever failing the write. The tiering is the point rather than an organising
 //! convenience — an agent's context budget is the binding constraint, and a
 //! search that returns full documents spends it on the nine results that were
 //! wrong. An agent that learns searching is expensive stops searching, and
@@ -88,6 +91,10 @@ pub const DEFAULT_LIST_RESULTS: usize = 10;
 pub struct KbTools {
     store: std::path::PathBuf,
     index: std::path::PathBuf,
+    /// Where vectors for written records come from, if anywhere. Built once
+    /// by whoever starts the server; a surface without one stores and
+    /// reports the record as not embedded rather than refusing the write.
+    embedder: Option<crate::cli_embed::CliEmbedder>,
 }
 
 impl KbTools {
@@ -97,6 +104,7 @@ impl KbTools {
         Self {
             store: crate::store::configured_store_path(),
             index: crate::index::configured_index_path(),
+            embedder: None,
         }
     }
 
@@ -109,7 +117,50 @@ impl KbTools {
         Self {
             store: store.into(),
             index: index.into(),
+            embedder: None,
         }
+    }
+
+    /// These tools, embedding each record they write through `embedder`.
+    ///
+    /// Taken as a value rather than read from the environment here, so the
+    /// surface stays a function of what it is handed and the caller decides
+    /// what an absent or half-configured endpoint means for its process.
+    #[must_use]
+    pub fn with_embedder(mut self, embedder: Option<crate::cli_embed::CliEmbedder>) -> Self {
+        self.embedder = embedder;
+        self
+    }
+
+    /// The report a write returns about embedding `ids`, after they were
+    /// stored.
+    ///
+    /// Never an error: the record is already stored, and a failure here is
+    /// content for the agent (`kb embed` fills the gap later) rather than a
+    /// reason to call the write failed.
+    fn embedding_report(&self, index: &crate::index::Index, ids: &[String]) -> Value {
+        let Some(embedder) = &self.embedder else {
+            return json!({ "status": "disabled", "detail": "no embedding endpoint is configured; the record is stored and findable by text" });
+        };
+        let rows: Vec<Value> = ids
+            .iter()
+            .map(
+                |id| match crate::write::embed_written(index, embedder, id) {
+                    Ok(done) => json!({
+                        "id": id,
+                        "status": "embedded",
+                        "embedded": done.embedded,
+                        "skipped": done.skipped,
+                    }),
+                    Err(e) => json!({
+                        "id": id,
+                        "status": "failed",
+                        "reason": format!("stored, but could not embed: {e}"),
+                    }),
+                },
+            )
+            .collect();
+        json!({ "status": "enabled", "records": rows })
     }
 
     /// Open the store, or say why not.
@@ -302,14 +353,7 @@ impl KbTools {
         // written through this surface and one written through `kb create`
         // land under the same spelling. Two normalizations would split a tag
         // across two names that no single query returns.
-        let tags: Vec<String> = optional_strings(arguments, "tags")
-            .iter()
-            .map(|tag| storage::normalize_tag(tag))
-            .filter(|tag| !tag.is_empty())
-            .collect();
-        if !tags.is_empty() {
-            storage::place_tags(&mut document, &tags);
-        }
+        place_requested_tags(&mut document, arguments);
         let id = arguments
             .get("id")
             .and_then(Value::as_str)
@@ -323,7 +367,120 @@ impl KbTools {
         let options = crate::write::WriteOptions::note(&id).map_err(|e| e.to_string())?;
         let written = crate::write::put_record(&store, &index, &id, &document, &options)
             .map_err(|e| e.to_string())?;
-        render(&json!({ "id": written.id, "superseded": written.superseded }))
+        let embedding = self.embedding_report(&index, std::slice::from_ref(&written.id));
+        render(&json!({
+            "id": written.id,
+            "superseded": written.superseded,
+            "embedding": embedding,
+        }))
+    }
+
+    /// Replace a record's document, keeping its kind, source and provenance.
+    fn update(&self, arguments: &Value) -> Result<String, String> {
+        let id = required(arguments, "id")?;
+        let body = required(arguments, "document")?;
+        let mut document = crate::parser::parse_document(body).map_err(|e| e.to_string())?;
+        // As the CLI does: a metadata drawer naming another record means the
+        // document was meant for a different target.
+        if let Some(drawer_id) = crate::org_meta::hydrate(&mut document)
+            && drawer_id != id
+        {
+            return Err(format!(
+                "document :ID: {drawer_id} does not match target node id {id}"
+            ));
+        }
+        place_requested_tags(&mut document, arguments);
+        let store = self.open_store()?;
+        let index = self.open_index()?;
+        // `put_record` would mint a record for a mistyped identifier.
+        if index.record(id).is_err() {
+            return Err(format!("no node with id: {id}"));
+        }
+        let options =
+            crate::write::existing_options(&store, &index, id).map_err(|e| e.to_string())?;
+        crate::write::put_record(&store, &index, id, &document, &options)
+            .map_err(|e| e.to_string())?;
+        let embedding = self.embedding_report(&index, &[id.to_owned()]);
+        render(&json!({ "id": id, "embedding": embedding }))
+    }
+
+    /// Delete a record. The blobs stay addressable in the store.
+    fn delete(&self, arguments: &Value) -> Result<String, String> {
+        let id = required(arguments, "id")?;
+        let store = self.open_store()?;
+        let index = self.open_index()?;
+        crate::write::delete_record(&store, &index, id).map_err(|e| e.to_string())?;
+        render(&json!({ "id": id, "deleted": true }))
+    }
+
+    /// Add or remove tags on one record, then embed it if it was rewritten.
+    fn edit_tags(&self, arguments: &Value, remove: bool) -> Result<String, String> {
+        let id = required(arguments, "id")?;
+        let tags = optional_strings(arguments, "tags");
+        if tags.is_empty() {
+            return Err("tags is required and must list at least one tag".to_owned());
+        }
+        let store = self.open_store()?;
+        let index = self.open_index()?;
+        let edit = if remove {
+            crate::write::remove_tags(&store, &index, id, &tags)
+        } else {
+            crate::write::add_tags(&store, &index, id, &tags)
+        }
+        .map_err(|e| e.to_string())?;
+        // A tag edit rewrites the stored document, which gives the record a
+        // new stream hash and leaves its vectors under the old one. A call
+        // that changed nothing wrote nothing and needs no new vectors.
+        let embedding = if edit.changed.is_empty() {
+            json!({ "status": "unchanged", "detail": "no tag changed, so nothing was rewritten" })
+        } else {
+            self.embedding_report(&index, std::slice::from_ref(&edit.id))
+        };
+        render(&json!({
+            "id": edit.id,
+            (if remove { "removed" } else { "added" }): edit.changed,
+            "tags": edit.tags,
+            "embedding": embedding,
+        }))
+    }
+
+    /// Move every record carrying one tag onto another, embedding each
+    /// record that was rewritten.
+    fn tags_merge(&self, arguments: &Value) -> Result<String, String> {
+        let from = required(arguments, "from")?;
+        let to = required(arguments, "to")?;
+        let store = self.open_store()?;
+        let index = self.open_index()?;
+        let merge = crate::write::merge_tag(&store, &index, from, to).map_err(|e| e.to_string())?;
+        let embedding = if merge.rewritten.is_empty() {
+            json!({ "status": "unchanged", "detail": "no record carries the source tag" })
+        } else {
+            self.embedding_report(&index, &merge.rewritten)
+        };
+        render(&json!({
+            "from": merge.from,
+            "to": merge.to,
+            "rewritten": merge.rewritten,
+            "count": merge.rewritten.len(),
+            "embedding": embedding,
+        }))
+    }
+}
+
+/// Place the `tags` argument into `document`, normalized as the CLI does.
+///
+/// Normalized and placed by the same functions `kb create` uses, so a tag
+/// written through this surface and one written through the CLI land under
+/// the same spelling. Two normalizations would split a tag across two names
+/// that no single query returns.
+fn place_requested_tags(document: &mut tftio_org::ast::Document, arguments: &Value) {
+    let tags: Vec<String> = optional_strings(arguments, "tags")
+        .iter()
+        .map(|tag| storage::normalize_tag(tag))
+        .filter(|tag| !tag.is_empty())
+        .collect();
+    if !tags.is_empty() {
+        storage::place_tags(document, &tags);
     }
 }
 
@@ -696,6 +853,73 @@ fn neighbour_specs() -> Vec<ToolSpec> {
     ]
 }
 
+/// The tools that change or remove records that already exist.
+fn write_specs() -> Vec<ToolSpec> {
+    let id = json!({ "type": "string", "description": "The record's identifier." });
+    let tags = |what: &str| {
+        json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": what,
+        })
+    };
+    vec![
+        ToolSpec {
+            name: "update",
+            description: "Replace an existing record's whole document, keeping its kind, source and provenance. This overwrites the body with what you send, so `get` it first and send the full revised text; to change only tags use `tags_add` or `tags_rm`. Fails for an unknown id rather than creating one. The result's `embedding` says whether new vectors were stored; a failure there leaves the update in place.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": id,
+                    "document": { "type": "string", "description": "The full replacement body, as org-mode text." },
+                    "tags": tags("Tags to add to those the new body already carries."),
+                },
+                "required": ["id", "document"],
+            }),
+        },
+        ToolSpec {
+            name: "delete",
+            description: "Delete a record by id: its name and index rows are removed and it stops appearing in every tool. The stored bytes remain addressable by hash, so an operator can recover it, but you cannot. Use only when asked to delete a specific record.",
+            schema: json!({
+                "type": "object",
+                "properties": { "id": id },
+                "required": ["id"],
+            }),
+        },
+        ToolSpec {
+            name: "tags_add",
+            description: "Add tags to one record without changing its body. Tags are normalized to lowercase kebab-case; call `tags` first and reuse an existing spelling. A tag the record already carries is not written. The result's `embedding` says whether the record was embedded again, which a tag edit needs because it changes the stored document.",
+            schema: json!({
+                "type": "object",
+                "properties": { "id": id, "tags": tags("Tags to add.") },
+                "required": ["id", "tags"],
+            }),
+        },
+        ToolSpec {
+            name: "tags_rm",
+            description: "Remove tags from one record without changing the rest of its body. Removing a tag the record does not carry is reported, not an error. To fix a variant spelling across records use `tags_merge`.",
+            schema: json!({
+                "type": "object",
+                "properties": { "id": id, "tags": tags("Tags to remove.") },
+                "required": ["id", "tags"],
+            }),
+        },
+        ToolSpec {
+            name: "tags_merge",
+            description: "Move every record carrying one tag onto another, to consolidate two spellings of one tag (read `tags` first). Rewrites each affected record, so each is embedded again; `embedding.records` reports each. Merging a tag no record carries is reported, not an error.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string", "description": "The tag to move records off." },
+                    "to": { "type": "string", "description": "The tag to move them onto." },
+                },
+                "required": ["from", "to"],
+            }),
+        },
+    ]
+}
+
 impl ToolSurface for KbTools {
     fn specs(&self) -> Vec<ToolSpec> {
         vec![
@@ -792,6 +1016,7 @@ impl ToolSurface for KbTools {
         .chain(read_specs())
         .chain(graph_specs())
         .chain(neighbour_specs())
+        .chain(write_specs())
         .collect()
     }
 
@@ -813,6 +1038,11 @@ impl ToolSurface for KbTools {
             "prompt_list" => Self::prompt_list(),
             "prompt_show" => Self::prompt_show(arguments),
             "prompt_render" => self.prompt_render(arguments),
+            "update" => self.update(arguments),
+            "delete" => self.delete(arguments),
+            "tags_add" => self.edit_tags(arguments, false),
+            "tags_rm" => self.edit_tags(arguments, true),
+            "tags_merge" => self.tags_merge(arguments),
             other => Err(format!("no such tool: {other}")),
         };
         match outcome {

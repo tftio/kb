@@ -62,7 +62,8 @@ fn main() -> std::process::ExitCode {
     };
     // The store and the index at their configured locations. `KB_DB_PATH` is
     // not read: the superseded database serves no tool since T029.
-    let surface = kb::mcp::KbTools::with_paths(&cli.store, &cli.index);
+    let surface =
+        kb::mcp::KbTools::with_paths(&cli.store, &cli.index).with_embedder(embedder_from_env());
     match cli.http {
         Some(addr) => runtime.block_on(serve_http(surface, addr, &cli.queue, &cli.index)),
         None => match runtime.block_on(kb::mcp_stdio::serve(surface)) {
@@ -72,6 +73,30 @@ fn main() -> std::process::ExitCode {
                 std::process::ExitCode::FAILURE
             }
         },
+    }
+}
+
+/// The embedder the environment configures, built once at start.
+///
+/// No configuration is a valid deployment and says nothing: writes are stored
+/// and reported as not embedded. A half-configured environment (an endpoint
+/// with no model) is a mistake, so it is named on stderr, and the server still
+/// starts, because no process may require an embedder to start.
+fn embedder_from_env() -> Option<kb::cli_embed::CliEmbedder> {
+    match kb::cli_embed::CliEmbedder::from_env() {
+        Ok(embedder) => {
+            eprintln!(
+                "kb-mcp: embedding writes with {} at {}",
+                embedder.model(),
+                embedder.endpoint()
+            );
+            Some(embedder)
+        }
+        Err(e) if e.is_disabled() => None,
+        Err(e) => {
+            eprintln!("kb-mcp: writes will not be embedded: {e}");
+            None
+        }
     }
 }
 

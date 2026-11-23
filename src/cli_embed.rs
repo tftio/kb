@@ -163,7 +163,8 @@ pub fn configured_model() -> Option<String> {
 /// request at a time and blocks on it; a worker pool would be threads that
 /// never run anything.
 pub struct CliEmbedder {
-    runtime: tokio::runtime::Runtime,
+    /// `None` only while dropping; see the `Drop` impl.
+    runtime: Option<tokio::runtime::Runtime>,
     embedder: PrefixedEmbedder<HttpEmbeddingClient>,
     model: String,
     endpoint: String,
@@ -205,7 +206,7 @@ impl CliEmbedder {
         let endpoint = config.base_url.clone();
         let embedder = PrefixedEmbedder::new(http_embedding_client(config.clone()), &config);
         Ok(Self {
-            runtime,
+            runtime: Some(runtime),
             embedder,
             model,
             endpoint,
@@ -252,12 +253,31 @@ impl CliEmbedder {
         &self,
         future: impl Future<Output = Result<Vec<f32>, EmbeddingError>>,
     ) -> Result<Vec<f32>, EmbedError> {
-        self.runtime
+        let Some(runtime) = &self.runtime else {
+            return Err(EmbedError::Runtime(std::io::Error::other(
+                "the embedding runtime was already shut down",
+            )));
+        };
+        runtime
             .block_on(future)
             .map_err(|source| EmbedError::Unreachable {
                 endpoint: self.endpoint.clone(),
                 source,
             })
+    }
+}
+
+impl Drop for CliEmbedder {
+    /// Shut the runtime down without waiting on it.
+    ///
+    /// A long-lived server holds an embedder inside its own async runtime and
+    /// drops it there when it stops. Dropping a `tokio` runtime from an async
+    /// context panics, and `shutdown_background` is the call that does not.
+    /// Nothing is in flight at this point: every request blocks its caller.
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
     }
 }
 
