@@ -2,7 +2,7 @@
 plan_format_version: 2
 plan_id: PLAN-20261123-kb-server-agent-surface
 title: Make the kb server the one interface agents use
-status: draft
+status: approved
 created_at: 2026-11-23
 updated_at: 2026-11-23
 owner: jfb
@@ -25,7 +25,7 @@ bug:
 execution:
   requires_operator_approval_before_implementation: true
   requires_plan_updates_during_execution: true
-  task_graph_status: draft
+  task_graph_status: approved
 project: null
 ---
 
@@ -357,6 +357,22 @@ and `/ingest/ids` to a base URL, so Decision 5, T006 and T007 now use
 `https://kb.h.tft.io`, and T006 no longer has to determine the form. Decision
 7 now notes that the server routes every non-ingest path to MCP, so `/mcp` is
 a convention.
+
+### 2026-11-23 — jfb (operator), execution
+
+Question or decision needed: Approval to implement, and how commits, branches
+and out-of-repository work are handled.
+
+Decision or guidance received: Execute the plan with one Sonnet-class subagent
+per task. Subagents may make one signed commit per task on
+`feat/mcp-agent-surface`, branched from `docs/plan-kb-server-agent-surface`;
+nothing is pushed. T006 starts in parallel with T001, but its agent prepares
+the clanker and secret changes and applies nothing until the operator approves
+them.
+
+Impact on plan: Plan and task graph status set to approved. T004's merge and
+release, and every change to clanker, agent-content and the home directory,
+still need approval at the time.
 
 ## Decision Log
 
