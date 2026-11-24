@@ -1383,6 +1383,16 @@ directories (21 each under ~/.config/claude/personal/skills,
 Not done: merging PR #52, the reinstall, and the claude mcp list check, which
 also needs the deployed server.
 
+Progress, 2026-11-24: PR #52 merged as `e4e1044`. With operator approval the
+agent-content checkout was fast-forwarded and `mise run reinstall` run (exit
+0). `~/.config/codex/personal/config.toml` now holds `[mcp_servers.kb]` with
+url `https://kb.h.tft.io/mcp` and `bearer_token_env_var = "KB_MCP_TOKEN"`; the
+OpenCode config, the Claude plugin manifest and the Pi extension register kb.
+No kb-* skill directory remains. `mise run doctor` passes its kb, Codex kb and
+package-drift checks and fails on one unrelated finding, the legacy
+`~/.codex/AGENTS.md` (dated 2026-08-06). Not done: the claude mcp list check,
+which needs the deployed server.
+
 ## T006 — Pass the kb token and ingest URL into personal sessions
 
 Status: `done`
