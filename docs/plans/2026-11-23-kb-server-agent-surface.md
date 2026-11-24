@@ -392,6 +392,26 @@ carry the clanker context in provenance; T007's launchd reconcile runs outside
 clanker and will need `--context` passed explicitly, since `clanker exec` sets
 no session markers. T004 is done at v8.0.0.
 
+### 2026-11-23 — jfb (operator), T007
+
+Question or decision needed: The go-live date that T007's `--since` needs is
+not known until the companion plan's T006 completes. Separately,
+`post_conversations` in `python/kb_import/cli.py` fetches the served ids only
+when the run is not a dry run, so `--reconcile --dry-run` counts every session
+since the date as "would create" and T007's second acceptance check cannot
+pass as written.
+
+Decision or guidance received: Write the plist and wrapper now with the date in
+one wrapper variable, and load the agent at go-live. Change kb-import so a
+dry-run reconcile makes the read-only `GET /ingest/ids` request and reports
+what a real run would post.
+
+Impact on plan: T007 gains a kb-import change, which needs a kb release and a
+reinstall of the `kb-import` tool (installed at 7.0.1) before its dry-run check
+can run. The wrapper refuses to run while the date is unset, and refuses to
+run if a harness context other than `personal` holds sessions, because it
+passes `--context personal`. Loading the agent waits on go-live.
+
 ## Decision Log
 
 Append-only. Decisions affecting architecture, behavior, sequencing, or tradeoffs, as
@@ -898,7 +918,7 @@ tasks:
       because the executing session predates the change. clanker doctor is healthy.
   - id: T007
     title: Schedule reconciliation on the laptop
-    status: not_started
+    status: in_progress
     depends_on: [T004, T006]
     owner: null
     description: >
@@ -1363,6 +1383,16 @@ directories (21 each under ~/.config/claude/personal/skills,
 Not done: merging PR #52, the reinstall, and the claude mcp list check, which
 also needs the deployed server.
 
+Progress, 2026-11-24: PR #52 merged as `e4e1044`. With operator approval the
+agent-content checkout was fast-forwarded and `mise run reinstall` run (exit
+0). `~/.config/codex/personal/config.toml` now holds `[mcp_servers.kb]` with
+url `https://kb.h.tft.io/mcp` and `bearer_token_env_var = "KB_MCP_TOKEN"`; the
+OpenCode config, the Claude plugin manifest and the Pi extension register kb.
+No kb-* skill directory remains. `mise run doctor` passes its kb, Codex kb and
+package-drift checks and fails on one unrelated finding, the legacy
+`~/.codex/AGENTS.md` (dated 2026-08-06). Not done: the claude mcp list check,
+which needs the deployed server.
+
 ## T006 — Pass the kb token and ingest URL into personal sessions
 
 Status: `done`
@@ -1426,7 +1456,7 @@ because the executing session predates the change. clanker doctor is healthy.
 
 ## T007 — Schedule reconciliation on the laptop
 
-Status: `not_started`
+Status: `in_progress`
 
 Depends on: T004 (a released `kb-import` matching the server) and T006 (the
 token's secret source).
@@ -1463,7 +1493,45 @@ still exists.
 
 ### Completion Evidence
 
-<Agents update this when the task is complete.>
+Progress, 2026-11-23 (task not complete):
+
+- The existing home-directory mechanism for agent secrets is to source
+  `~/.secrets`, as `~/.local/bin/zipline-upload` does; the wrapper follows it.
+  The `io.tft.kb-server` orphan named in `systems/docs/macos.md` was removed
+  from moominpapa on 2026-07-27 according to that file's history, and no kb
+  agent exists on this machine, so there is nothing to remove or reuse.
+- yadm commit `8317a13` (signed, not pushed) adds `~/.local/bin/kb-reconcile`
+  and `~/Library/LaunchAgents/io.tft.kb-reconcile.plist` (StartInterval 3600,
+  RunAtLoad, logs under `~/.local/state/kb-reconcile/`). The plist holds no
+  token; the wrapper sources `~/.secrets` and exports `KB_INGEST_TOKEN` and
+  `KB_INGEST_URL`. `shellcheck`, `shfmt -d` and `plutil -lint` pass. With
+  `GO_LIVE` empty the wrapper exits 64. A second context holding transcripts
+  makes it exit 65 (tested against a scratch HOME). The agent is not loaded:
+  `launchctl print` reports the service is not found.
+- Unreachable server: `kb-import --post http://127.0.0.1:9 --reconcile --since
+  2026-11-23 --context personal` exits 2 with "Connection refused", and the
+  title cache `~/.local/state/kb-import/titles.json` keeps its mtime and size.
+- kb commit `cf4de4e` on branch `fix/kb-import-dry-run-reconcile` (signed, not
+  pushed) makes `--reconcile --dry-run` fetch the served ids. `mise run ci`
+  passes.
+
+Remaining: push and merge the kb fix, release it, reinstall the `kb-import`
+tool, set `GO_LIVE` at go-live, load the agent, and run both acceptance checks.
+
+Progress, 2026-11-24 (task not complete):
+
+- The fix merged as #14 (`68bbb2f`). release-plz logged `tftio-kb: already up
+  to date` and opened no release PR, because `Cargo.toml`'s `include` list held
+  only the Rust sources and release-plz diffs the packaged files. #15
+  (`917e61e`) adds `python/**` to `include`; release PR #16 then released
+  v8.0.1 (`dcd862c`). The v8.0.1 changelog lists #15 but not #14; the tag
+  contains #14's code.
+- `uv tool install --force git+ssh://git@github.com/tftio/kb@v8.0.1`:
+  `~/.local/bin/kb-import --version` reports 8.0.1, and its `--dry-run` help
+  describes the served-ids request.
+
+Remaining: set `GO_LIVE` at go-live, load the agent, and run both acceptance
+checks.
 
 ## T008 — Verify the whole path end to end
 
