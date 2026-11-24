@@ -145,7 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report what would be imported without writing or contacting any endpoint.",
+        help=(
+            "Report what would be imported without writing anything. With --post "
+            "--reconcile it makes one read-only request for the ids the server holds, "
+            "so the report matches what a real run would send."
+        ),
     )
     parser.add_argument("--since", default=None, help="Skip conversations older than YYYY-MM-DD.")
     parser.add_argument("--session", default=None, help="Import exactly one session by id.")
@@ -481,6 +485,13 @@ def post_conversations(
     ask which ids are held, never what they say. The server settles that
     instead, which is why a re-post costs nothing there.
 
+    With `--reconcile` the ids the server holds are fetched even on a dry run:
+    that request is read-only, and without it a dry run would report every
+    session as new rather than what a real run would send. A dry run still
+    posts nothing and derives no titles.
+
+    An `IngestError` from fetching the held ids propagates to the caller.
+
     A failure on one conversation is reported and the rest continue. A capture
     run that stops at the first unreachable moment would turn one bad session
     into a lost batch.
@@ -496,7 +507,7 @@ def post_conversations(
         One `Report` per source encountered.
     """
     served: list[str] = []
-    if args.reconcile and not args.dry_run:
+    if args.reconcile:
         served = client.served_ids()
 
     reports: dict[str, Report] = {}

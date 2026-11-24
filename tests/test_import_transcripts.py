@@ -2807,3 +2807,46 @@ def test_a_dry_run_posts_nothing(monkeypatch, tmp_path):
     )
     assert client.posted == []
     assert reports["codex"].created == 1
+
+
+def test_a_dry_run_reconcile_reports_what_a_real_run_would_send(monkeypatch, tmp_path):
+    held = _conversation(model.Message(role="human", text="one", timestamp=""))
+    missing = dataclasses.replace(
+        _conversation(model.Message(role="human", text="two", timestamp="")),
+        node_id="codex-missing",
+    )
+    client = _RecordingClient(served=["codex-abc123"])
+    # A dry run derives no titles: a call here would shell out to claude.
+    monkeypatch.setattr(
+        kbi,
+        "derive_title",
+        lambda *_args: pytest.fail("a dry run must not derive titles"),
+    )
+
+    reports = kbi.post_conversations(
+        [held, missing],
+        _posting_args(reconcile=True, dry_run=True),
+        titles.TitleCache(tmp_path / "titles.json"),
+        lambda _argv, _stdin: "",
+        client,
+    )
+
+    assert client.posted == []
+    assert reports["codex"].skipped == 1
+    assert reports["codex"].created == 1
+
+
+def test_a_dry_run_reconcile_that_cannot_reach_the_server_exits_2(monkeypatch, tmp_path, capsys):
+    # The dry run now depends on the server, so an unreachable one must fail
+    # loudly once rather than report every session as new.
+    cache_path = tmp_path / "titles.json"
+    monkeypatch.setattr(kbi, "DEFAULT_CACHE_PATH", cache_path)
+    monkeypatch.setenv("KB_INGEST_TOKEN", "a-token")
+    conversation = _conversation(model.Message(role="human", text="one", timestamp=""))
+    monkeypatch.setattr(kbi, "collect", lambda _args: ([conversation], {}))
+
+    status = kbi.main(["--post", "http://127.0.0.1:1", "--reconcile", "--dry-run"])
+
+    assert status == 2
+    assert "kb-import:" in capsys.readouterr().err
+    assert not cache_path.exists()
