@@ -1,5 +1,11 @@
 # Changelog
 
+## [8.0.1](https://github.com/tftio/kb/compare/v8.0.0...v8.0.1) - 2026-11-24
+
+### Fixed
+
+- *(release)* package python/ so kb-import changes trigger a release ([#15](https://github.com/tftio/kb/pull/15))
+
 ## [8.0.0](https://github.com/tftio/kb/compare/v7.0.1...v8.0.0) - 2026-11-23
 
 ### Added
