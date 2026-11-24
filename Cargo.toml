@@ -17,9 +17,13 @@ publish = false
 # every tracked file: `resources/eval/` holds evaluation fixtures that do not
 # belong in a crate, and the Python gate's files would read as a package
 # definition for a crate with no Python in it. The script and template are here
-# because `src/` embeds them with `include_str!`.
+# because `src/` embeds them with `include_str!`. `python/**` is here because
+# release-plz decides whether to release by diffing the packaged files: without
+# it, a change to `kb-import` alone never produces a release, although
+# `kb-import` takes its version from this file and ships from the same tag.
 include = [
   "src/**",
+  "python/**",
   "scripts/session-end-kb.sh",
   "templates/cold-start-audit.j2",
   "Cargo.toml",
