@@ -1508,6 +1508,21 @@ Progress, 2026-11-23 (task not complete):
 Remaining: push and merge the kb fix, release it, reinstall the `kb-import`
 tool, set `GO_LIVE` at go-live, load the agent, and run both acceptance checks.
 
+Progress, 2026-11-24 (task not complete):
+
+- The fix merged as #14 (`68bbb2f`). release-plz logged `tftio-kb: already up
+  to date` and opened no release PR, because `Cargo.toml`'s `include` list held
+  only the Rust sources and release-plz diffs the packaged files. #15
+  (`917e61e`) adds `python/**` to `include`; release PR #16 then released
+  v8.0.1 (`dcd862c`). The v8.0.1 changelog lists #15 but not #14; the tag
+  contains #14's code.
+- `uv tool install --force git+ssh://git@github.com/tftio/kb@v8.0.1`:
+  `~/.local/bin/kb-import --version` reports 8.0.1, and its `--dry-run` help
+  describes the served-ids request.
+
+Remaining: set `GO_LIVE` at go-live, load the agent, and run both acceptance
+checks.
+
 ## T008 — Verify the whole path end to end
 
 Status: `not_started`
